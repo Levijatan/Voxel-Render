@@ -1,0 +1,15 @@
+[package]
+name = "voxel-render"
+version = "0.1.0"
+authors = ["Levijatan <aasmunjr@uio.no>"]
+edition = "2018"
+
+[dependencies]
+gl = "0.14.0"
+
+[dependencies.glfw]
+git = "https://github.com/bjz/glfw-rs.git"
+
+[dependencies.cgmath]
+version = "0.17.0"
+features = ["swizzle"]
