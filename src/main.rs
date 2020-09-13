@@ -60,6 +60,7 @@ fn main() {
     window.make_current();
     window.set_key_polling(true);
     window.set_framebuffer_size_polling(true);
+    window.set_cursor_mode(glfw::CursorMode::Disabled);
 
     //GL init
     gl::load_with(|symbol| window.get_proc_address(symbol) as *const _);
