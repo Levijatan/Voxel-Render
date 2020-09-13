@@ -49,3 +49,11 @@ pub fn voxel_to_chunk_pos(voxel_pos: Point3<f32>, chunk_size: f32) -> Point3<f32
     let z = (voxel_pos.z / chunk_size).floor();
     return Point3::new(x, y, z);
 }
+
+pub fn idx_to_pos(idx: usize, size: f32) -> Point3<f32> {
+    let i = idx as f32;
+    let x = i % size;
+    let y = (i % (size * size)) / size;
+    let z = i / (size * size);
+    Point3::new(x, y, z)
+}

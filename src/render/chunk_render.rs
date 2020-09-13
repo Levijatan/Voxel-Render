@@ -1,5 +1,6 @@
 use crate::geom::voxel_to_chunk_pos;
-use crate::geom::Chunk;
+use crate::geom::ChunkKey;
+use crate::geom::PointCloud;
 
 use super::Camera;
 
@@ -15,15 +16,15 @@ use std::ptr;
 use cgmath::{MetricSpace, Vector3};
 
 #[derive(Copy, Clone)]
-struct ChunkData<'a> {
-    c: &'a Chunk,
+struct ChunkData {
+    key: ChunkKey,
     rendered: bool,
     amount: i32,
     vbo: u32,
     priority: i32,
 }
 
-impl<'a> Ord for ChunkData<'a> {
+impl Ord for ChunkData {
     fn cmp(&self, other: &Self) -> Ordering {
         other
             .priority
@@ -32,27 +33,27 @@ impl<'a> Ord for ChunkData<'a> {
     }
 }
 
-impl<'a> PartialOrd for ChunkData<'a> {
+impl PartialOrd for ChunkData {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl<'a> PartialEq for ChunkData<'a> {
+impl PartialEq for ChunkData {
     fn eq(&self, other: &Self) -> bool {
         self.priority == other.priority || self.amount == other.amount || self.vbo == other.vbo
     }
 }
 
-impl<'a> Eq for ChunkData<'a> {}
+impl Eq for ChunkData {}
 
-pub struct ChunkRender<'a> {
+pub struct ChunkRender {
     pub vao: u32,
-    queue: BinaryHeap<ChunkData<'a>>,
+    queue: BinaryHeap<ChunkData>,
     max_render_radius: f32,
 }
 
-impl<'a> ChunkRender<'a> {
+impl ChunkRender {
     pub unsafe fn new(render_radius: f32) -> Self {
         let mut vao = 0 as u32;
 
@@ -72,13 +73,13 @@ impl<'a> ChunkRender<'a> {
         }
     }
 
-    pub fn add_to_queue(&mut self, chunk: &'a Chunk) {
+    pub fn add_to_queue(&mut self, key: ChunkKey) {
         let mut vbo = 0;
         unsafe {
             gl::GenBuffers(1, &mut vbo);
         }
         self.queue.push(ChunkData {
-            c: chunk,
+            key,
             rendered: false,
             amount: 0,
             vbo,
@@ -92,14 +93,17 @@ impl<'a> ChunkRender<'a> {
         }
     }
 
-    pub unsafe fn process_queue(&mut self, cam: &Camera) {
+    pub unsafe fn process_queue(&mut self, cam: &Camera, pc: &PointCloud) {
         let mut done = BinaryHeap::new();
         while !self.queue.is_empty() {
             let mut cd = self.queue.pop().unwrap();
 
-            let cam_in_chunk = voxel_to_chunk_pos(cam.pos, cd.c.size)
-                + Vector3::new(cd.c.size / 2.0, cd.c.size / 2.0, cd.c.size / 2.0);
-            cd.priority = cam_in_chunk.distance(cd.c.pos) as i32;
+            let size = pc.chunk_size;
+            let c = &pc.c[&cd.key];
+
+            let cam_in_chunk = voxel_to_chunk_pos(cam.pos, size)
+                + Vector3::new(size / 2.0, size / 2.0, size / 2.0);
+            cd.priority = cam_in_chunk.distance(c.pos) as i32;
             /*
             println!(
                 "Rendering Chunk with {} priority, max priority: {}",
@@ -108,7 +112,7 @@ impl<'a> ChunkRender<'a> {
             */
 
             if !cd.rendered {
-                let d = cd.c.render();
+                let d = c.render();
                 cd.rendered = true;
                 cd.amount = d.len() as i32;
                 if cd.amount > 0 {
@@ -123,9 +127,9 @@ impl<'a> ChunkRender<'a> {
                 }
             }
 
-            let chunk_world_pos = cd.c.world_pos_min
-                + Vector3::new(cd.c.size / 2.0, cd.c.size / 2.0, cd.c.size / 2.0);
-            if cam.cube_in_view(chunk_world_pos, cd.c.size) {
+            let chunk_world_pos =
+                c.world_pos_min + Vector3::new(c.size / 2.0, c.size / 2.0, c.size / 2.0);
+            if cam.cube_in_view(chunk_world_pos, c.size) {
                 if cd.amount > 0 {
                     gl::BindBuffer(gl::ARRAY_BUFFER, cd.vbo);
                     let count = cd.amount;

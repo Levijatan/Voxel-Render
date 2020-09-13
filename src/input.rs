@@ -64,8 +64,8 @@ impl CursorState {
     }
 
     pub fn process(&mut self, x: f32, y: f32, cam: &mut Camera) {
-        let x_offset = (x - self.last_x) * self.sensitivity;
-        let y_offset = (self.last_y - y) * self.sensitivity;
+        let x_offset = (x - self.last_x) * self.sensitivity * cam.delta_time as f32;
+        let y_offset = (self.last_y - y) * self.sensitivity * cam.delta_time as f32;
         self.last_x = x;
         self.last_y = y;
 

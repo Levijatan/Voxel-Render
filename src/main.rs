@@ -129,9 +129,12 @@ fn main() {
     }
 
     while !window.should_close() {
+        //Updates
+        cam.update(glfw.get_time());
+        pc.update_lighting(&voxreg);
+        pc.update(&voxreg);
         //Events
         process_events(&mut window, &events, &mut keys, &mut cursor, &mut cam);
-        cam.update(glfw.get_time());
         keys.process_all_states(&mut cam);
 
         //Render
@@ -151,7 +154,7 @@ fn main() {
             program.set_mat4(&CString::new("invMv").unwrap(), &inv_mv);
             program.set_vector2(&CString::new("screenSize").unwrap(), &screen_size);
 
-            cr.process_queue(&cam);
+            cr.process_queue(&cam, &pc);
         }
         window.swap_buffers();
         glfw.poll_events();

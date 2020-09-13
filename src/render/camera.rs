@@ -144,7 +144,7 @@ pub struct Camera {
     speed_const: f32,
     speed: f32,
     frustum: Frustum,
-    delta_time: f64,
+    pub delta_time: f64,
     last_frame: f64,
     yaw: f32,
     pitch: f32,
