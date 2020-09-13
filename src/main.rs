@@ -22,6 +22,7 @@ mod render;
 mod shader;
 mod voxel_registry;
 
+use input::CursorState;
 use input::KeyState;
 use render::Camera;
 use render::ChunkRender;
@@ -60,6 +61,8 @@ fn main() {
     window.make_current();
     window.set_key_polling(true);
     window.set_framebuffer_size_polling(true);
+    window.set_cursor_mode(glfw::CursorMode::Disabled);
+    window.set_cursor_pos_polling(true);
 
     //GL init
     gl::load_with(|symbol| window.get_proc_address(symbol) as *const _);
@@ -91,6 +94,7 @@ fn main() {
 
     //Camera Movement
     let mut keys = KeyState::new();
+    let mut cursor = CursorState::new(SCREEN_WIDTH as f32 / 2.0, SCREEN_HEIGHT as f32 / 2.0, 1.0);
 
     keys.add_state(Key::W, Camera::move_forward);
     keys.add_state(Key::A, Camera::move_left);
@@ -103,8 +107,8 @@ fn main() {
     let mut pc = geom::PointCloud::new(CHUNK_SIZE as f32);
 
     pc.create_cube(
-        Point3::new(-256.0, 0.0, -256.0),
-        Point3::new(256.0, 1.0, 256.0),
+        Point3::new(-16.0, 0.0, -16.0),
+        Point3::new(16.0, 1.0, 16.0),
         &voxreg,
     );
     pc.update(&voxreg);
@@ -126,7 +130,7 @@ fn main() {
 
     while !window.should_close() {
         //Events
-        process_events(&mut window, &events, &mut keys);
+        process_events(&mut window, &events, &mut keys, &mut cursor, &mut cam);
         cam.update(glfw.get_time());
         keys.process_all_states(&mut cam);
 
@@ -158,6 +162,8 @@ fn process_events(
     window: &mut glfw::Window,
     events: &Receiver<(f64, glfw::WindowEvent)>,
     ks: &mut KeyState,
+    cs: &mut CursorState,
+    cam: &mut Camera,
 ) {
     for (_, event) in glfw::flush_messages(events) {
         match event {
@@ -170,43 +176,20 @@ fn process_events(
                 window.set_should_close(true)
             }
 
-            glfw::WindowEvent::Key(Key::W, _, Action::Press, _) => {
-                ks.set_state(Key::W, true);
-            }
-            glfw::WindowEvent::Key(Key::W, _, Action::Release, _) => {
-                ks.set_state(Key::W, false);
-            }
-            glfw::WindowEvent::Key(Key::A, _, Action::Press, _) => {
-                ks.set_state(Key::A, true);
-            }
-            glfw::WindowEvent::Key(Key::A, _, Action::Release, _) => {
-                ks.set_state(Key::A, false);
-            }
-            glfw::WindowEvent::Key(Key::S, _, Action::Press, _) => {
-                ks.set_state(Key::S, true);
-            }
-            glfw::WindowEvent::Key(Key::S, _, Action::Release, _) => {
-                ks.set_state(Key::S, false);
-            }
-            glfw::WindowEvent::Key(Key::D, _, Action::Press, _) => {
-                ks.set_state(Key::D, true);
-            }
-            glfw::WindowEvent::Key(Key::D, _, Action::Release, _) => {
-                ks.set_state(Key::D, false);
+            glfw::WindowEvent::Key(_, _, _, _) => {
+                if let glfw::WindowEvent::Key(key, _, action, _) = event {
+                    if action == Action::Press {
+                        ks.set_state(key, true);
+                    } else if action == Action::Release {
+                        ks.set_state(key, false)
+                    }
+                }
             }
 
-            glfw::WindowEvent::Key(Key::Space, _, Action::Press, _) => {
-                ks.set_state(Key::Space, true);
-            }
-            glfw::WindowEvent::Key(Key::Space, _, Action::Release, _) => {
-                ks.set_state(Key::Space, false);
-            }
-
-            glfw::WindowEvent::Key(Key::LeftShift, _, Action::Press, _) => {
-                ks.set_state(Key::LeftShift, true);
-            }
-            glfw::WindowEvent::Key(Key::LeftShift, _, Action::Release, _) => {
-                ks.set_state(Key::LeftShift, false);
+            glfw::WindowEvent::CursorPos(_, _) => {
+                if let glfw::WindowEvent::CursorPos(x, y) = event {
+                    cs.process(x as f32, y as f32, cam);
+                }
             }
 
             _ => {}

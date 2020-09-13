@@ -2,21 +2,6 @@ use cgmath::{perspective, Deg, InnerSpace, Matrix4, Point3, Vector3};
 use std::f32;
 use std::f32::consts::PI;
 
-pub struct Camera {
-    pub pos: Point3<f32>,
-    pub front: Vector3<f32>,
-    pub up: Vector3<f32>,
-    pub fov: f32,
-    pub near_plane: f32,
-    pub far_plane: f32,
-    pub aspect_ratio: f32,
-    speed_const: f32,
-    speed: f32,
-    frustum: Frustum,
-    delta_time: f64,
-    last_frame: f64,
-}
-
 struct Frustum {
     sphere_factor_x: f32,
     sphere_factor_y: f32,
@@ -148,6 +133,23 @@ impl Frustum {
     }
 }
 
+pub struct Camera {
+    pub pos: Point3<f32>,
+    pub front: Vector3<f32>,
+    pub up: Vector3<f32>,
+    pub fov: f32,
+    pub near_plane: f32,
+    pub far_plane: f32,
+    pub aspect_ratio: f32,
+    speed_const: f32,
+    speed: f32,
+    frustum: Frustum,
+    delta_time: f64,
+    last_frame: f64,
+    yaw: f32,
+    pitch: f32,
+}
+
 impl Camera {
     pub fn new(
         pos: Point3<f32>,
@@ -172,6 +174,8 @@ impl Camera {
             delta_time: 0.0,
             last_frame: 0.0,
             speed: 0.0,
+            yaw: 0.0,
+            pitch: 0.0,
         };
     }
 
@@ -195,11 +199,22 @@ impl Camera {
         );
     }
 
-    pub fn rotate(&mut self, radius: f32, angle: f32) {
-        let cam_x = angle.sin() * radius;
-        let cam_z = angle.cos() * radius;
-        self.pos.x = cam_x;
-        self.pos.z = cam_z;
+    pub fn rotate(&mut self, x_offset: f32, y_offset: f32) {
+        self.yaw += x_offset;
+        self.pitch += y_offset;
+        if self.pitch > 89.0 {
+            self.pitch = 89.0;
+        }
+        if self.pitch < -89.0 {
+            self.pitch = -89.0;
+        }
+        let front_dir = Vector3::new(
+            self.yaw.to_radians().cos() * self.pitch.to_radians().cos(),
+            self.pitch.to_radians().sin(),
+            self.yaw.to_radians().sin() * self.pitch.to_radians().cos(),
+        )
+        .normalize();
+        self.front = front_dir;
         self.update_frustum();
     }
 
