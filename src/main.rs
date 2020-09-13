@@ -96,12 +96,18 @@ fn main() {
     keys.add_state(Key::A, Camera::move_left);
     keys.add_state(Key::S, Camera::move_back);
     keys.add_state(Key::D, Camera::move_right);
+    keys.add_state(Key::Space, Camera::move_up);
+    keys.add_state(Key::LeftShift, Camera::move_down);
 
     //World Gen
     let mut pc = geom::PointCloud::new(CHUNK_SIZE as f32);
 
-    pc.create_cube(Point3::new(-16.0, 0.0, -16.0), Point3::new(16.0, 1.0, 16.0));
-    pc.update();
+    pc.create_cube(
+        Point3::new(-256.0, 0.0, -256.0),
+        Point3::new(256.0, 1.0, 256.0),
+        &voxreg,
+    );
+    pc.update(&voxreg);
     let render_data = pc.render();
 
     //Render setup
@@ -187,6 +193,20 @@ fn process_events(
             }
             glfw::WindowEvent::Key(Key::D, _, Action::Release, _) => {
                 ks.set_state(Key::D, false);
+            }
+
+            glfw::WindowEvent::Key(Key::Space, _, Action::Press, _) => {
+                ks.set_state(Key::Space, true);
+            }
+            glfw::WindowEvent::Key(Key::Space, _, Action::Release, _) => {
+                ks.set_state(Key::Space, false);
+            }
+
+            glfw::WindowEvent::Key(Key::LeftShift, _, Action::Press, _) => {
+                ks.set_state(Key::LeftShift, true);
+            }
+            glfw::WindowEvent::Key(Key::LeftShift, _, Action::Release, _) => {
+                ks.set_state(Key::LeftShift, false);
             }
 
             _ => {}

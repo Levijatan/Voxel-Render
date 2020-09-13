@@ -108,19 +108,9 @@ impl<'a> ChunkRender<'a> {
             */
 
             if !cd.rendered {
-                let mut d = Vec::new();
+                let d = cd.c.render();
                 cd.rendered = true;
-                let render_data = cd.c.render();
-                for v in render_data {
-                    let x = v.pos.x;
-                    let y = v.pos.y;
-                    let z = v.pos.z;
-                    d.push(x);
-                    d.push(y);
-                    d.push(z);
-                }
                 cd.amount = d.len() as i32;
-                println!("{}", cd.amount);
                 if cd.amount > 0 {
                     gl::BindBuffer(gl::ARRAY_BUFFER, cd.vbo);
                     gl::BufferData(

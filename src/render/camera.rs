@@ -228,6 +228,16 @@ impl Camera {
         cam.update_frustum();
     }
 
+    pub fn move_up(cam: &mut Camera) {
+        cam.pos += cam.up * cam.speed;
+        cam.update_frustum();
+    }
+
+    pub fn move_down(cam: &mut Camera) {
+        cam.pos -= cam.up * cam.speed;
+        cam.update_frustum();
+    }
+
     #[allow(dead_code)]
     pub fn point_in_view(&self, p: Point3<f32>) -> bool {
         self.frustum.point(
