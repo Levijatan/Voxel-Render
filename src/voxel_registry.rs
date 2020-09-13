@@ -1,9 +1,15 @@
 use std::collections::HashMap;
-use std::string::String;
+
+use crate::consts::INVALID_VOXEL_ID;
 
 struct Entry {
     string_id: &'static str,
-    transparent: bool,
+    attributes: VoxelAttributes,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct VoxelAttributes {
+    pub transparent: bool,
 }
 
 pub struct VoxelReg {
@@ -29,16 +35,19 @@ impl VoxelReg {
         let key = self.get_new_key();
         self.reg.entry(key).or_insert(Entry {
             string_id,
-            transparent,
+            attributes: VoxelAttributes { transparent },
         });
         key
     }
 
-    pub fn voxel_attributes(&self, key: &u64) -> bool {
-        self.reg.get(key).unwrap().transparent
+    pub fn voxel_attributes(&self, key: &u64) -> VoxelAttributes {
+        if *key != INVALID_VOXEL_ID {
+            return self.reg.get(key).unwrap().attributes;
+        }
+        VoxelAttributes { transparent: false }
     }
 
-    pub fn key_from_string_id(&self, string_id: String) -> u64 {
+    pub fn key_from_string_id(&self, string_id: &str) -> u64 {
         for (key, val) in self.reg.iter() {
             if val.string_id == string_id {
                 return *key;
