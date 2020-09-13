@@ -42,6 +42,33 @@ impl<'a> KeyState<'a> {
     }
 
     pub fn set_state(&mut self, k: Key, held: bool) {
-        self.key_state.get_mut(&k).unwrap().held = held;
+        if self.key_state.contains_key(&k) {
+            self.key_state.get_mut(&k).unwrap().held = held;
+        }
+    }
+}
+
+pub struct CursorState {
+    last_x: f32,
+    last_y: f32,
+    sensitivity: f32,
+}
+
+impl CursorState {
+    pub fn new(x: f32, y: f32, sensitivity: f32) -> CursorState {
+        CursorState {
+            last_x: x,
+            last_y: y,
+            sensitivity,
+        }
+    }
+
+    pub fn process(&mut self, x: f32, y: f32, cam: &mut Camera) {
+        let x_offset = (x - self.last_x) * self.sensitivity;
+        let y_offset = (self.last_y - y) * self.sensitivity;
+        self.last_x = x;
+        self.last_y = y;
+
+        cam.rotate(x_offset, y_offset);
     }
 }
