@@ -1,6 +1,8 @@
 #version 440
 
-in vec3 vPos;
+layout (location = 0) in vec3 vPos;
+layout (location = 1) in float lightLevel;
+
 
 uniform mat4 mvp;
 uniform vec2 screenSize;
@@ -8,6 +10,7 @@ uniform float voxelSize;
 
 out vec3 posBox;
 out vec3 radiusBox;
+out float light;
 
 
 void quadricProj(in vec3 osPosition, in float voxelSize,
@@ -42,7 +45,6 @@ void quadricProj(in vec3 osPosition, in float voxelSize,
 
 void main() {
     vec3 vertex = vPos;
-    vertex *= voxelSize ;
     vec4 position = mvp * vec4(vertex, 1);
     float pointSize;
 
@@ -61,4 +63,5 @@ void main() {
 
     posBox = vertex;
     radiusBox = vec3(voxelSize/2);
+    light = lightLevel;
 }

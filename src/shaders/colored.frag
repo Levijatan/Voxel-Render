@@ -2,15 +2,18 @@
 
 in vec3 posBox;
 in vec3 radiusBox;
+in float light;
 
 uniform mat4 mvp;
 uniform mat4 invP;
 uniform mat4 invMv;
 uniform vec2 screenSize;
+uniform float voxelSize;
+
+uniform sampler2D voxelTexture;
+
 
 out vec4 fragColor;
-
-vec3 light = normalize( vec3(0.57703) );
 
 struct Ray {
     vec3 direction;
@@ -50,7 +53,7 @@ bool ourHitAABox(vec3 boxCenter, vec3 boxRadius, vec3 rayOrigin, vec3 rayDirecti
 
 bool rayBoxIntersect(Box box, Ray ray, out float dist, out vec3 normal,
     const bool canStartInBox, const in bool oriented, in vec3 _invRayDir) {
-    ray.origin = ray.origin - box.center;
+    ray.origin = (ray.origin - box.center);
     if (oriented) {
         ray.origin *= box.rotation;
         ray.direction *= box.rotation;
@@ -81,16 +84,23 @@ bool rayBoxIntersect(Box box, Ray ray, out float dist, out vec3 normal,
 
 
 float GetLight(vec3 p, vec3 normal) {
-    vec3 lightPos = vec3(16, 16, 16);
+    vec3 lightPos = vec3(8, 16, 8);
     vec3 l = normalize(lightPos-p);
 
-    float dif = clamp(abs(dot(normal, l)), 0.0, 1.0);
+    float dif = max((dot(normal, l)), 0.0);
     return dif;
+}
+
+float LinearizeDepth(float depth) {
+    float z = depth * 2.0 - 1.0;
+    float near = gl_DepthRange.near;
+    float far = gl_DepthRange.far;
+    return (2.0 * near * far) / (far + near - z * (far - near));
 }
 
 void main() {
 
-    vec2 uv = 2*((gl_FragCoord.xy + 0.5) / screenSize.xy)-1;
+    vec2 uv = 2.0*((gl_FragCoord.xy + 0.5) / screenSize.xy)-1.0;
     vec4 osCamPos = invMv * vec4(0,0,0,1);
 	vec3 ro = osCamPos.xyz;//ray origin
     vec4 rdh = (invMv * invP) * vec4(uv,-1.0,1.0);
@@ -103,24 +113,36 @@ void main() {
     vec3 normal;
 
     bool trace = rayBoxIntersect(b, r, dist, normal,
-        false, false, safeInverse(r.direction));
+        true, false, safeInverse(r.direction));
 
-
-
-
-    vec3 viewDir =  osCamPos.xyz - vec3(0);
-    if (trace == false || dot(viewDir, normal) < 000000.1) {
+    if (trace == false) {
         discard;
     }
 
     vec3 pos = r.origin + (dist * r.direction);
+    vec3 viewDir = osCamPos.xyz - pos;
+
+    if (dot(viewDir, normal) < 000000.1) {
+        discard;
+    }
+
     vec4 PClip = mvp * vec4(pos, 1.0);
     float ndc_depth = PClip.z / PClip.w;
 
-    gl_FragDepth = (gl_DepthRange.diff * ndc_depth +
-            gl_DepthRange.far + gl_DepthRange.near) / 2.0;
+    gl_FragDepth = (ndc_depth - gl_DepthRange.near) / (gl_DepthRange.far - gl_DepthRange.near);
 
-    float dif = GetLight(pos, normal);
-    vec3 col = (normalize(pos) * vec3(dif));
-    fragColor = vec4(col, 0.1);
+    vec3 lightColor = vec3(1.0);
+    float ambientStrength = 0.1;
+
+    vec2 tileUV = (vec2(dot(normal.zxy, pos),
+        dot(normal.yzx, pos)));
+
+    vec4 texture = texture(voxelTexture, tileUV);
+    vec3 ambient = (ambientStrength * lightColor) * texture.xyz;
+
+    float diff = GetLight(pos, normal) ;
+    vec3 diffuse = diff * lightColor * texture.xyz;
+    vec3 col = (ambient + diffuse);
+
+    fragColor = texture * vec4(col, 1);
 }

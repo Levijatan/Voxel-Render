@@ -4,11 +4,9 @@ use std::io::Read;
 use std::ptr;
 use std::str;
 
-use gl;
 use gl::types::*;
 
-use cgmath::prelude::*;
-use cgmath::{Matrix, Matrix4, Vector2, Vector3};
+use glm::{Mat4, Vec2, Vec3};
 
 pub struct Shader {
     pub id: u32,
@@ -81,7 +79,7 @@ impl Shader {
     }
 
     #[allow(dead_code)]
-    pub unsafe fn set_vector3(&self, name: &CStr, value: &Vector3<f32>) {
+    pub unsafe fn set_vec3(&self, name: &CStr, value: &Vec3) {
         gl::Uniform3fv(
             gl::GetUniformLocation(self.id, name.as_ptr()),
             1,
@@ -90,7 +88,7 @@ impl Shader {
     }
 
     #[allow(dead_code)]
-    pub unsafe fn set_vector2(&self, name: &CStr, value: &Vector2<f32>) {
+    pub unsafe fn set_vec2(&self, name: &CStr, value: &Vec2) {
         gl::Uniform2fv(
             gl::GetUniformLocation(self.id, name.as_ptr()),
             1,
@@ -99,12 +97,7 @@ impl Shader {
     }
 
     #[allow(dead_code)]
-    pub unsafe fn set_vec3(&self, name: &CStr, x: f32, y: f32, z: f32) {
-        gl::Uniform3f(gl::GetUniformLocation(self.id, name.as_ptr()), x, y, z);
-    }
-
-    #[allow(dead_code)]
-    pub unsafe fn set_mat4(&self, name: &CStr, mat: &Matrix4<f32>) {
+    pub unsafe fn set_mat4(&self, name: &CStr, mat: &Mat4) {
         gl::UniformMatrix4fv(
             gl::GetUniformLocation(self.id, name.as_ptr()),
             1,

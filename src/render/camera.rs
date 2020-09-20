@@ -1,14 +1,15 @@
-use cgmath::{perspective, Deg, InnerSpace, Matrix4, Point3, Vector3};
 use std::f32;
 use std::f32::consts::PI;
+
+use glm::{Mat4, Vec3};
 
 struct Frustum {
     sphere_factor_x: f32,
     sphere_factor_y: f32,
     tang: f32,
-    x: Vector3<f32>,
-    y: Vector3<f32>,
-    z: Vector3<f32>,
+    x: Vec3,
+    y: Vec3,
+    z: Vec3,
 }
 
 #[derive(PartialEq)]
@@ -22,54 +23,54 @@ impl Frustum {
     pub fn new(
         fov: f32,
         aspect_ratio: f32,
-        cam_pos: Point3<f32>,
-        cam_target: Point3<f32>,
-        cam_dir: Vector3<f32>,
+        cam_pos: Vec3,
+        cam_target: Vec3,
+        cam_dir: Vec3,
     ) -> Frustum {
         let angle = fov * (PI / 360.0);
         let tang = angle.tan();
         let anglex = (tang * aspect_ratio).atan();
-        let z = (cam_pos - cam_target).normalize();
-        let x = cam_dir.cross(z).normalize();
+        let z = glm::normalize(&(cam_pos - cam_target));
+        let x = glm::normalize(&cam_dir.cross(&z));
         Frustum {
             tang,
             sphere_factor_y: 1.0 / angle.cos(),
             sphere_factor_x: 1.0 / anglex.cos(),
             x,
-            y: z.cross(x),
+            y: z.cross(&x),
             z,
         }
     }
 
-    pub fn update(&mut self, cam_pos: Point3<f32>, cam_target: Point3<f32>, cam_dir: Vector3<f32>) {
-        self.z = (cam_pos - cam_target).normalize();
-        self.x = cam_dir.cross(self.z).normalize();
-        self.y = self.z.cross(self.x);
+    pub fn update(&mut self, cam_pos: Vec3, cam_target: Vec3, cam_dir: Vec3) {
+        self.z = glm::normalize(&(cam_pos - cam_target));
+        self.x = glm::normalize(&cam_dir.cross(&self.z));
+        self.y = self.z.cross(&self.x);
     }
 
     #[allow(dead_code)]
     pub fn point(
         &self,
-        p: Point3<f32>,
-        cam_pos: Point3<f32>,
+        p: Vec3,
+        cam_pos: Vec3,
         far_plane: f32,
         near_plane: f32,
         ratio: f32,
     ) -> FrustumPos {
         let v = p - cam_pos;
 
-        let pcz = v.dot(-self.z);
+        let pcz = v.dot(&(-self.z));
         if pcz > far_plane || pcz < near_plane {
             return FrustumPos::OUTSIDE;
         }
 
-        let pcy = v.dot(self.y);
+        let pcy = v.dot(&self.y);
         let mut aux = pcz * self.tang;
         if pcy > aux || pcy < -aux {
             return FrustumPos::OUTSIDE;
         }
 
-        let pcx = v.dot(self.x);
+        let pcx = v.dot(&self.x);
         aux *= ratio;
         if pcx > aux || pcx < -aux {
             return FrustumPos::OUTSIDE;
@@ -80,28 +81,28 @@ impl Frustum {
 
     pub fn sphere(
         &self,
-        center: Point3<f32>,
+        center: Vec3,
         radius: f32,
-        cam_pos: Point3<f32>,
+        cam_pos: Vec3,
         far_plane: f32,
         near_plane: f32,
         ratio: f32,
     ) -> FrustumPos {
         let v = center - cam_pos;
 
-        let az = v.dot(-self.z);
+        let az = v.dot(&(-self.z));
         if az > far_plane + radius || az < near_plane - radius {
             return FrustumPos::OUTSIDE;
         }
 
-        let ax = v.dot(self.x);
+        let ax = v.dot(&self.x);
         let zz1 = az * self.tang * ratio;
         let d1 = self.sphere_factor_x * radius;
         if ax > zz1 + d1 || az < -zz1 - d1 {
             return FrustumPos::OUTSIDE;
         }
 
-        let ay = v.dot(self.y);
+        let ay = v.dot(&self.y);
         let zz2 = az * self.tang;
         let d2 = self.sphere_factor_y * radius;
         if ay > zz2 + d2 || ay < -zz2 - d2 {
@@ -121,9 +122,9 @@ impl Frustum {
 
     pub fn cube(
         &self,
-        center: Point3<f32>,
+        center: Vec3,
         size: f32,
-        cam_pos: Point3<f32>,
+        cam_pos: Vec3,
         far_plane: f32,
         near_plane: f32,
         ratio: f32,
@@ -134,9 +135,9 @@ impl Frustum {
 }
 
 pub struct Camera {
-    pub pos: Point3<f32>,
-    pub front: Vector3<f32>,
-    pub up: Vector3<f32>,
+    pub pos: Vec3,
+    pub front: Vec3,
+    pub up: Vec3,
     pub fov: f32,
     pub near_plane: f32,
     pub far_plane: f32,
@@ -152,15 +153,15 @@ pub struct Camera {
 
 impl Camera {
     pub fn new(
-        pos: Point3<f32>,
-        up: Vector3<f32>,
+        pos: Vec3,
+        up: Vec3,
         speed: f32,
         fov: f32,
         near_plane: f32,
         far_plane: f32,
         aspect_ratio: f32,
     ) -> Camera {
-        let front = Vector3::new(0.0, 0.0, -1.0);
+        let front = Vec3::new(0.0, 0.0, -1.0);
         return Camera {
             pos,
             front,
@@ -186,13 +187,13 @@ impl Camera {
         self.speed = self.speed_const * self.delta_time as f32;
     }
 
-    pub fn view(&self) -> Matrix4<f32> {
-        Matrix4::look_at(self.pos, self.pos + self.front, self.up)
+    pub fn view(&self) -> Mat4 {
+        glm::look_at(&self.pos, &(self.pos + self.front), &self.up)
     }
 
-    pub fn projection(&self) -> Matrix4<f32> {
-        return perspective(
-            Deg(self.fov),
+    pub fn projection(&self) -> Mat4 {
+        return glm::perspective(
+            self.fov * PI / 180.0,
             self.aspect_ratio,
             self.near_plane,
             self.far_plane,
@@ -208,7 +209,7 @@ impl Camera {
         if self.pitch < -89.0 {
             self.pitch = -89.0;
         }
-        let front_dir = Vector3::new(
+        let front_dir = Vec3::new(
             self.yaw.to_radians().cos() * self.pitch.to_radians().cos(),
             self.pitch.to_radians().sin(),
             self.yaw.to_radians().sin() * self.pitch.to_radians().cos(),
@@ -234,12 +235,12 @@ impl Camera {
     }
 
     pub fn move_left(cam: &mut Camera) {
-        cam.pos -= cam.front.cross(cam.up).normalize() * cam.speed;
+        cam.pos -= glm::normalize(&cam.front.cross(&cam.up)) * cam.speed;
         cam.update_frustum();
     }
 
     pub fn move_right(cam: &mut Camera) {
-        cam.pos += cam.front.cross(cam.up).normalize() * cam.speed;
+        cam.pos += glm::normalize(&cam.front.cross(&cam.up)) * cam.speed;
         cam.update_frustum();
     }
 
@@ -254,7 +255,7 @@ impl Camera {
     }
 
     #[allow(dead_code)]
-    pub fn point_in_view(&self, p: Point3<f32>) -> bool {
+    pub fn point_in_view(&self, p: Vec3) -> bool {
         self.frustum.point(
             p,
             self.pos,
@@ -265,7 +266,7 @@ impl Camera {
     }
 
     #[allow(dead_code)]
-    pub fn sphere_in_view(&self, center: Point3<f32>, radius: f32) -> bool {
+    pub fn sphere_in_view(&self, center: Vec3, radius: f32) -> bool {
         self.frustum.sphere(
             center,
             radius,
@@ -277,7 +278,7 @@ impl Camera {
     }
 
     #[allow(dead_code)]
-    pub fn cube_in_view(&self, center: Point3<f32>, size: f32) -> bool {
+    pub fn cube_in_view(&self, center: Vec3, size: f32) -> bool {
         self.frustum.cube(
             center,
             size,

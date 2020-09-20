@@ -1,8 +1,7 @@
 use crate::Camera;
 use std::collections::HashMap;
 
-extern crate glfw;
-use self::glfw::Key;
+use glfw::Key;
 
 pub struct KeyState<'a> {
     key_state: HashMap<Key, State<'a>>,
