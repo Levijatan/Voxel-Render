@@ -1,8 +1,8 @@
-use cgmath::Point3;
+use glm::Vec3;
 
-pub fn check_start_stop(start: Point3<f32>, stop: Point3<f32>) -> (Point3<f32>, Point3<f32>) {
-    let mut out_start = Point3::new(0.0, 0.0, 0.0);
-    let mut out_stop = Point3::new(0.0, 0.0, 0.0);
+pub fn check_start_stop(start: Vec3, stop: Vec3) -> (Vec3, Vec3) {
+    let mut out_start = Vec3::new(0.0, 0.0, 0.0);
+    let mut out_stop = Vec3::new(0.0, 0.0, 0.0);
 
     if start.x < stop.x {
         out_start.x = start.x;
@@ -31,21 +31,26 @@ pub fn check_start_stop(start: Point3<f32>, stop: Point3<f32>) -> (Point3<f32>, 
     return (out_start, out_stop);
 }
 
-pub fn check_start_stop_to_i32(
-    start: Point3<f32>,
-    stop: Point3<f32>,
-) -> (Point3<i32>, Point3<i32>) {
-    let (t_start, t_stop) = check_start_stop(start, stop);
-    return (pos_f32_to_i32(t_start), pos_f32_to_i32(t_stop));
+pub fn voxel_to_chunk_pos(voxel_pos: Vec3, chunk_size: usize) -> Vec3 {
+    let size = chunk_size as f32;
+    let x = (voxel_pos.x / size).floor();
+    let y = (voxel_pos.y / size).floor();
+    let z = (voxel_pos.z / size).floor();
+    return Vec3::new(x, y, z);
 }
 
-pub fn pos_f32_to_i32(pos: Point3<f32>) -> Point3<i32> {
-    return Point3::new(pos.x as i32, pos.y as i32, pos.z as i32);
+pub fn calc_idx(x: usize, y: usize, z: usize, size: usize) -> usize {
+    let out = (z * size * size) + (x * size) + y;
+    if out >= size * size * size {
+        panic!("Cannot use larger x,y,z than size");
+    }
+    out
 }
 
-pub fn voxel_to_chunk_pos(voxel_pos: Point3<f32>, chunk_size: f32) -> Point3<f32> {
-    let x = (voxel_pos.x / chunk_size).floor();
-    let y = (voxel_pos.y / chunk_size).floor();
-    let z = (voxel_pos.z / chunk_size).floor();
-    return Point3::new(x, y, z);
+pub fn idx_to_pos(idx: usize, size: usize) -> Vec3 {
+    let i = idx;
+    let y = i % size;
+    let x = (i % (size * size)) / size;
+    let z = i / (size * size);
+    Vec3::new(x as f32, y as f32, z as f32)
 }

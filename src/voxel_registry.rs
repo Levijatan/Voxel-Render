@@ -2,14 +2,25 @@ use std::collections::HashMap;
 
 use crate::consts::INVALID_VOXEL_ID;
 
+use glm::Vec3;
+
 struct Entry {
     string_id: &'static str,
     attributes: VoxelAttributes,
 }
 
 #[derive(Debug, Copy, Clone)]
+pub struct Material {
+    pub ambient: Vec3,
+    pub diffuse: Vec3,
+    pub specular: Vec3,
+    pub shininess: f32,
+}
+
+#[derive(Debug, Copy, Clone)]
 pub struct VoxelAttributes {
     pub transparent: bool,
+    pub mat: Material,
 }
 
 pub struct VoxelReg {
@@ -31,11 +42,16 @@ impl VoxelReg {
         key
     }
 
-    pub fn register_voxel_type(&mut self, string_id: &'static str, transparent: bool) -> u64 {
+    pub fn register_voxel_type(
+        &mut self,
+        string_id: &'static str,
+        transparent: bool,
+        mat: Material,
+    ) -> u64 {
         let key = self.get_new_key();
         self.reg.entry(key).or_insert(Entry {
             string_id,
-            attributes: VoxelAttributes { transparent },
+            attributes: VoxelAttributes { transparent, mat },
         });
         key
     }
@@ -44,7 +60,15 @@ impl VoxelReg {
         if *key != INVALID_VOXEL_ID {
             return self.reg.get(key).unwrap().attributes;
         }
-        VoxelAttributes { transparent: false }
+        VoxelAttributes {
+            transparent: false,
+            mat: Material {
+                ambient: Vec3::new(0.0, 0.0, 0.0),
+                diffuse: Vec3::new(0.0, 0.0, 0.0),
+                specular: Vec3::new(0.0, 0.0, 0.0),
+                shininess: 0.0,
+            },
+        }
     }
 
     pub fn key_from_string_id(&self, string_id: &str) -> u64 {

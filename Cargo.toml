@@ -5,11 +5,16 @@ authors = ["Levijatan <aasmunjr@uio.no>"]
 edition = "2018"
 
 [dependencies]
+nalgebra-glm = "0.8.0"
 gl = "0.14.0"
+image = "0.23.9"
 
 [dependencies.glfw]
 git = "https://github.com/bjz/glfw-rs.git"
 
-[dependencies.cgmath]
-version = "0.17.0"
-features = ["swizzle"]
+[profile.dev.package.voxel-render]
+opt-level = 0
+
+[profile.dev.packge."*"]
+codegen-units = 1
+opt-level = "z"

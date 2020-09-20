@@ -5,29 +5,41 @@
     clippy::nursery,
     clippy::cargo
 )]
-
-extern crate glfw;
-use self::glfw::{Action, Context, Key};
-
 extern crate gl;
+extern crate glfw;
+extern crate image;
+extern crate nalgebra_glm as glm;
 
-use cgmath::{Point3, SquareMatrix, Vector2, Vector3};
+use glfw::{Action, Context, Key};
+use glm::{Vec2, Vec3};
+
 use std::ffi::CString;
 use std::sync::mpsc::Receiver;
+use std::sync::Arc;
 
+mod chunk_gen;
 mod consts;
 mod geom;
 mod input;
 mod render;
 mod shader;
+mod texture;
 mod voxel_registry;
+mod world;
 
+use chunk_gen::ChunkGen;
 use input::CursorState;
 use input::KeyState;
 use render::Camera;
 use render::ChunkRender;
 use shader::Shader;
+use texture::generate_texture;
+use voxel_registry::Material;
 use voxel_registry::VoxelReg;
+use world::FlatWorldType;
+use world::World;
+use world::WorldRegistry;
+use world::WorldTypeRegistry;
 
 const SCREEN_WIDTH: u32 = 2560;
 const SCREEN_HEIGHT: u32 = 1440;
@@ -36,7 +48,12 @@ const GL_MINOR_VERSION: u32 = 4;
 const WINDOW_NAME: &'static str = "Voxel Renderer";
 
 const VOXEL_SIZE: f32 = 1.0;
-const CHUNK_SIZE: u32 = 16;
+const CHUNK_SIZE: usize = 16;
+
+pub struct SharedState {
+    voxel_registry: VoxelReg,
+    world_type_registry: WorldTypeRegistry,
+}
 
 fn main() {
     //GLFW init
@@ -70,31 +87,55 @@ fn main() {
     let program = Shader::new("src/shaders/raybox.vert", "src/shaders/colored.frag");
 
     //Setings init
-    let screen_size = Vector2::<f32>::new(SCREEN_WIDTH as f32, SCREEN_HEIGHT as f32);
+    let screen_size = Vec2::new(SCREEN_WIDTH as f32, SCREEN_HEIGHT as f32);
     let mut cam = Camera::new(
-        Point3 {
-            x: 0.0,
-            y: 5.0,
-            z: -1.0,
-        },
-        Vector3 {
-            x: 0.0,
-            y: 1.0,
-            z: 0.0,
-        },
+        glm::vec3(0.0, 5.0, 0.0),
+        glm::vec3(0.0, 1.0, 0.0),
         20.0,
         70.0,
-        0.1,
-        100.0,
+        0.001,
+        1000.0,
         SCREEN_WIDTH as f32 / SCREEN_HEIGHT as f32,
     );
     let mut voxreg = VoxelReg::new();
-    voxreg.register_voxel_type(consts::OPAQUE_VOXEL, false);
-    voxreg.register_voxel_type(consts::TRANSPARENT_VOXEL, true);
+    voxreg.register_voxel_type(
+        consts::OPAQUE_VOXEL,
+        false,
+        Material {
+            ambient: Vec3::new(1.0, 1.0, 1.0),
+            diffuse: Vec3::new(0.8, 0.8, 0.8),
+            specular: Vec3::new(0.5, 0.8, 0.1),
+            shininess: 0.1,
+        },
+    );
+    voxreg.register_voxel_type(
+        consts::TRANSPARENT_VOXEL,
+        true,
+        Material {
+            ambient: Vec3::new(0.0, 0.0, 0.0),
+            diffuse: Vec3::new(0.0, 0.0, 0.0),
+            specular: Vec3::new(0.0, 0.0, 0.0),
+            shininess: 0.0,
+        },
+    );
+
+    let mut world_type_reg = WorldTypeRegistry::new();
+    world_type_reg.register_world_type(Box::new(FlatWorldType {
+        chunk_size: CHUNK_SIZE,
+    }));
+
+    let shared_state = Arc::new(SharedState {
+        voxel_registry: voxreg,
+        world_type_registry: world_type_reg,
+    });
+
+    let mut world_reg = WorldRegistry::new();
+
+    world_reg.new_world(World::new(true, CHUNK_SIZE, 1, 2.0));
 
     //Camera Movement
     let mut keys = KeyState::new();
-    let mut cursor = CursorState::new(SCREEN_WIDTH as f32 / 2.0, SCREEN_HEIGHT as f32 / 2.0, 1.0);
+    let mut cursor = CursorState::new(SCREEN_WIDTH as f32 / 2.0, SCREEN_HEIGHT as f32 / 2.0, 10.0);
 
     keys.add_state(Key::W, Camera::move_forward);
     keys.add_state(Key::A, Camera::move_left);
@@ -104,57 +145,88 @@ fn main() {
     keys.add_state(Key::LeftShift, Camera::move_down);
 
     //World Gen
-    let mut pc = geom::PointCloud::new(CHUNK_SIZE as f32);
 
-    pc.create_cube(
-        Point3::new(-16.0, 0.0, -16.0),
-        Point3::new(16.0, 1.0, 16.0),
-        &voxreg,
-    );
-    pc.update(&voxreg);
-    let render_data = pc.render();
+    let (tx_chunk_gen, rx_chunk) = ChunkGen::init(shared_state.clone());
 
     //Render setup
-    let mut cr;
+    let mut renderer: ChunkRender;
     unsafe {
-        cr = ChunkRender::new(32.0);
         program.use_program();
         gl::ClearColor(1.0, 1.0, 1.0, 1.0);
         gl::Enable(gl::DEPTH_TEST);
         gl::Enable(gl::PROGRAM_POINT_SIZE);
+        renderer = ChunkRender::new(2.0);
     }
 
-    for rd in render_data {
-        cr.add_to_queue(rd);
-    }
+    generate_texture("src/texture/T_UV_Map.jpg".to_string());
+
+    let ticks_per_second = 20.0;
+    let tick_step = 1.0 / ticks_per_second;
+
+    let mut last_time = 0.0;
 
     while !window.should_close() {
-        //Events
-        process_events(&mut window, &events, &mut keys, &mut cursor, &mut cam);
-        cam.update(glfw.get_time());
-        keys.process_all_states(&mut cam);
+        let mut test_time: f64;
 
-        //Render
-        unsafe {
-            gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
-            gl::BindVertexArray(cr.vao);
+        {
+            let active_world = world_reg.world_mut(&1);
+            let cur_time = glfw.get_time();
 
-            let mv = cam.view();
-            let p = cam.projection();
-            let mvp = p * mv;
-            let inv_p = p.invert().unwrap();
-            let inv_mv = mv.invert().unwrap();
+            if last_time + tick_step <= cur_time {
+                println!(
+                    "cur time: {}, last time {}, step size {}, current step {}",
+                    cur_time,
+                    last_time,
+                    tick_step,
+                    cur_time - last_time
+                );
+                //Updates
+                cam.update(glfw.get_time());
+                test_time = glfw.get_time();
+                active_world.check_for_new_chunks(&cam, &tx_chunk_gen, 1);
+                println!("Check for new chunks: {}s", glfw.get_time() - test_time);
+                test_time = glfw.get_time();
+                active_world.update(&shared_state.voxel_registry);
+                println!("Update world: {}s", glfw.get_time() - test_time);
+                test_time = glfw.get_time();
+                active_world.render(&cam, &mut renderer);
+                println!("Render update world: {}s", glfw.get_time() - test_time);
 
-            program.set_float(&CString::new("voxelSize").unwrap(), VOXEL_SIZE);
-            program.set_mat4(&CString::new("mvp").unwrap(), &mvp);
-            program.set_mat4(&CString::new("invP").unwrap(), &inv_p);
-            program.set_mat4(&CString::new("invMv").unwrap(), &inv_mv);
-            program.set_vector2(&CString::new("screenSize").unwrap(), &screen_size);
+                last_time = cur_time;
+            }
+            test_time = glfw.get_time();
+            //Events
+            process_events(&mut window, &events, &mut keys, &mut cursor, &mut cam);
+            keys.process_all_states(&mut cam);
 
-            cr.process_queue(&cam);
+            println!("Event processing: {}s", glfw.get_time() - test_time);
+
+            test_time = glfw.get_time();
+            //Render
+            unsafe {
+                gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
+                gl::BindVertexArray(renderer.vao);
+
+                let mv = cam.view();
+                let p = cam.projection();
+                let mvp = p * mv;
+                let inv_p = glm::inverse(&p);
+                let inv_mv = glm::inverse(&mv);
+
+                program.set_float(&CString::new("voxelSize").unwrap(), VOXEL_SIZE);
+                program.set_mat4(&CString::new("mvp").unwrap(), &mvp);
+                program.set_mat4(&CString::new("invP").unwrap(), &inv_p);
+                program.set_mat4(&CString::new("invMv").unwrap(), &inv_mv);
+                program.set_vec2(&CString::new("screenSize").unwrap(), &screen_size);
+                renderer.process_queue(&cam, &mut active_world.pc);
+            }
         }
+        println!("Render: {}s", glfw.get_time() - test_time);
         window.swap_buffers();
         glfw.poll_events();
+        test_time = glfw.get_time();
+        world_reg.fetch_chunks_from_gen(&rx_chunk, &shared_state.voxel_registry);
+        println!("Fetching Chunks from gen: {}s", glfw.get_time() - test_time);
     }
 }
 
