@@ -2,7 +2,6 @@
 
 in vec3 posBox;
 in vec3 radiusBox;
-in float light;
 
 uniform mat4 mvp;
 uniform mat4 invP;

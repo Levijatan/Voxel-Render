@@ -15,6 +15,6 @@ git = "https://github.com/bjz/glfw-rs.git"
 [profile.dev.package.voxel-render]
 opt-level = 0
 
-[profile.dev.packge."*"]
+[profile.dev.package."*"]
 codegen-units = 1
 opt-level = "z"

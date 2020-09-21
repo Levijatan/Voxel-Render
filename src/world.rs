@@ -1,12 +1,12 @@
 use super::chunk_gen::ChunkNode;
 use super::chunk_gen::GenNode;
 use super::consts::OPAQUE_VOXEL;
-use super::geom::calc_idx;
 use super::geom::Chunk;
 use super::geom::ChunkKey;
 use super::geom::PointCloud;
 use super::render::Camera;
 use super::render::ChunkRender;
+use super::ChunkUpdater;
 use super::VoxelReg;
 
 use glm::{distance, Vec3};
@@ -31,13 +31,22 @@ impl WorldType for FlatWorldType {
         if pos.y == 0.0 {
             for x in 0..self.chunk_size {
                 for z in 0..self.chunk_size {
-                    let idx = calc_idx(x, 0, z, self.chunk_size);
-                    c.set_voxel_idx(idx, voxel_type);
+                    let vox_pos = Vec3::new(x as f32, 0.0, z as f32);
+                    c.set_voxel(voxel_type, &vox_pos, reg, self.chunk_size);
                 }
             }
         } else if pos.y < 0.0 {
-            for i in 0..c.tot_size {
-                c.set_voxel_idx(i, voxel_type);
+            for y in 0..self.chunk_size {
+                for x in 0..self.chunk_size {
+                    for z in 0..self.chunk_size {
+                        c.set_voxel(
+                            voxel_type,
+                            &Vec3::new(x as f32, y as f32, z as f32),
+                            reg,
+                            self.chunk_size,
+                        );
+                    }
+                }
             }
         }
         c
@@ -54,6 +63,7 @@ pub struct World {
     pub active: bool,
     chunk_radius: f32,
     old_cam_pos: Vec3,
+    chunk_size: usize,
 }
 
 impl World {
@@ -64,15 +74,12 @@ impl World {
             active,
             chunk_radius,
             old_cam_pos: Vec3::new(99.0, 99.0, 99.0),
+            chunk_size,
         }
     }
 
-    pub fn update(&mut self, reg: &VoxelReg) {
-        self.pc.update(reg);
-    }
-
     pub fn render(&mut self, cam: &Camera, renderer: &mut ChunkRender) {
-        let cam_chunk_pos = super::geom::voxel_to_chunk_pos(cam.pos, self.pc.chunk_size);
+        let cam_chunk_pos = super::geom::voxel_to_chunk_pos(&cam.pos, self.chunk_size);
         let max_x = (cam_chunk_pos.x + self.chunk_radius) as i32;
         let max_y = (cam_chunk_pos.y + self.chunk_radius) as i32;
         let max_z = (cam_chunk_pos.z + self.chunk_radius) as i32;
@@ -83,7 +90,10 @@ impl World {
             for x in min_x..max_x {
                 for z in min_z..max_z {
                     let key = ChunkKey { x, y, z };
-                    if self.pc.c.contains_key(&key) && !self.pc.c[&key].in_queue {
+                    if self.pc.chunk_exists(&key)
+                        && !self.pc.chunk_in_queue(&key)
+                        && self.pc.chunk_render(&key)
+                    {
                         renderer.add_to_queue(key, &mut self.pc);
                     }
                 }
@@ -92,7 +102,7 @@ impl World {
     }
 
     pub fn check_for_new_chunks(&mut self, cam: &Camera, tx: &Sender<GenNode>, world_id: u64) {
-        let cam_chunk_pos = super::geom::voxel_to_chunk_pos(cam.pos, self.pc.chunk_size);
+        let cam_chunk_pos = super::geom::voxel_to_chunk_pos(&cam.pos, self.chunk_size);
         if self.old_cam_pos != cam_chunk_pos {
             self.old_cam_pos = cam_chunk_pos;
             let max_x = (cam_chunk_pos.x + self.chunk_radius) as i32;
@@ -105,8 +115,10 @@ impl World {
                 for x in min_x..max_x {
                     for z in min_z..max_z {
                         let key = ChunkKey { x, y, z };
-                        if !self.pc.keys.contains(&key) {
-                            self.pc.keys.push(key);
+                        if !self.pc.chunk_exists(&key) {
+                            let chunk =
+                                Chunk::new_gen(self.chunk_size, x as f32, y as f32, z as f32);
+                            self.pc.insert_chunk(key, chunk);
                             let pos = Vec3::new(x as f32, y as f32, z as f32);
                             let gen = GenNode {
                                 priority: distance(&cam_chunk_pos, &pos) as i32,
@@ -121,6 +133,10 @@ impl World {
                 }
             }
         }
+    }
+
+    pub fn chunk_size(&self) -> usize {
+        self.chunk_size
     }
 }
 
@@ -168,10 +184,6 @@ impl WorldRegistry {
         self.world_reg.insert(id, world);
     }
 
-    pub fn type_of_world(&self, world_id: u64) -> u64 {
-        self.world_reg.get(&world_id).unwrap().world_type
-    }
-
     fn get_next_world_key(&mut self) -> u64 {
         let out = self.next_world_key;
         self.next_world_key += 1;
@@ -182,7 +194,11 @@ impl WorldRegistry {
         self.world_reg.get_mut(id).unwrap()
     }
 
-    pub fn fetch_chunks_from_gen(&mut self, rx: &Receiver<ChunkNode>, reg: &VoxelReg) {
+    pub fn world(&self, id: &u64) -> &World {
+        self.world_reg.get(id).unwrap()
+    }
+
+    pub fn fetch_chunks_from_gen(&mut self, rx: &Receiver<ChunkNode>, updater: &mut ChunkUpdater) {
         match rx.try_recv() {
             Ok(node) => {
                 let key = ChunkKey::new(node.chunk.pos);
@@ -190,7 +206,8 @@ impl WorldRegistry {
                     .get_mut(&node.world_id)
                     .unwrap()
                     .pc
-                    .insert_chunk(key, node.chunk, reg);
+                    .insert_chunk(key, node.chunk);
+                updater.add_to_queue(key, node.world_id);
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {}
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {

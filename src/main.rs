@@ -18,6 +18,7 @@ use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 
 mod chunk_gen;
+mod chunk_updater;
 mod consts;
 mod geom;
 mod input;
@@ -28,6 +29,7 @@ mod voxel_registry;
 mod world;
 
 use chunk_gen::ChunkGen;
+use chunk_updater::ChunkUpdater;
 use input::CursorState;
 use input::KeyState;
 use render::Camera;
@@ -147,6 +149,7 @@ fn main() {
     //World Gen
 
     let (tx_chunk_gen, rx_chunk) = ChunkGen::init(shared_state.clone());
+    let mut updater = ChunkUpdater::new();
 
     //Render setup
     let mut renderer: ChunkRender;
@@ -169,6 +172,8 @@ fn main() {
         let mut test_time: f64;
 
         {
+            updater.process(&mut world_reg, &shared_state.voxel_registry);
+
             let active_world = world_reg.world_mut(&1);
             let cur_time = glfw.get_time();
 
@@ -186,7 +191,6 @@ fn main() {
                 active_world.check_for_new_chunks(&cam, &tx_chunk_gen, 1);
                 println!("Check for new chunks: {}s", glfw.get_time() - test_time);
                 test_time = glfw.get_time();
-                active_world.update(&shared_state.voxel_registry);
                 println!("Update world: {}s", glfw.get_time() - test_time);
                 test_time = glfw.get_time();
                 active_world.render(&cam, &mut renderer);
@@ -225,7 +229,7 @@ fn main() {
         window.swap_buffers();
         glfw.poll_events();
         test_time = glfw.get_time();
-        world_reg.fetch_chunks_from_gen(&rx_chunk, &shared_state.voxel_registry);
+        world_reg.fetch_chunks_from_gen(&rx_chunk, &mut updater);
         println!("Fetching Chunks from gen: {}s", glfw.get_time() - test_time);
     }
 }
