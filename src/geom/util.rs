@@ -11,7 +11,10 @@ pub fn voxel_to_chunk_pos(voxel_pos: &Vec3, chunk_size: usize) -> Vec3 {
 pub fn calc_idx(x: usize, y: usize, z: usize, size: usize) -> usize {
     let out = (z * size * size) + (x * size) + y;
     if out >= size * size * size {
-        panic!("Cannot use larger x,y,z than size");
+        panic!(
+            "Cannot use larger x:{}, y:{} ,z:{} than size:{}",
+            x, y, z, size
+        );
     }
     out
 }

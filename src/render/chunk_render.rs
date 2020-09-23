@@ -14,7 +14,7 @@ use std::mem;
 use std::os::raw::c_void;
 use std::ptr;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 struct ChunkData {
     key: ChunkKey,
     rendered: bool,
@@ -108,14 +108,20 @@ impl ChunkRender {
         while !self.queue.is_empty() {
             let mut cd = self.queue.pop().unwrap();
 
-            let cam_in_chunk = voxel_to_chunk_pos(&cam.pos, pc.chunk_size()) + half_size_vec;
-            cd.priority = glm::distance(&cam_in_chunk, &pc.chunk_pos(&cd.key)) as i32;
-            /*
-            println!(
-                "Rendering Chunk with {} priority, max priority: {}",
-                cd.priority, self.max_render_radius
-            );
-            */
+            let cam_in_chunk = voxel_to_chunk_pos(&cam.pos, pc.chunk_size());
+            let chunk_pos = &pc.chunk_pos(&cd.key);
+            let distance = glm::distance(&cam_in_chunk, &chunk_pos);
+            // println!(
+            //     "distance: {}, cam pos: {}, chunk pos: {}",
+            //     distance, cam_in_chunk, chunk_pos
+            // );
+            cd.priority = distance as i32;
+
+            // println!(
+            //     "Rendering Chunk with {} priority, max priority: {}",
+            //     cd.priority, self.max_render_radius
+            // );
+
             if !cd.rendered || pc.chunk_rerender(&cd.key) {
                 pc.chunk_set_rerender(&cd.key, false);
                 let d = pc.render_chunk(&cd.key);
@@ -150,7 +156,9 @@ impl ChunkRender {
                     gl::BindBuffer(gl::ARRAY_BUFFER, 0);
                 }
             }
-            if cd.priority as f32 <= self.max_render_radius {
+            //println!("{:?}, max priority: {}", cd, self.max_render_radius);
+            //std::thread::sleep(std::time::Duration::from_secs(1));
+            if pc.chunk_is_visible(&cd.key) && cd.priority as f32 <= self.max_render_radius {
                 done.push(cd);
             } else {
                 self.remove_from_queue(cd.vbo, cd.key, pc);

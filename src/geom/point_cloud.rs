@@ -50,14 +50,14 @@ impl PointCloud {
     }
 
     pub fn chunk_exists(&self, key: &ChunkKey) -> bool {
-        self.c.contains_key(key)
+        self.c.contains_key(key) && !self.c[key].gen
     }
 
     pub fn chunk_is_transparent(&self, key: &ChunkKey, norm_key: i32) -> bool {
         if self.chunk_exists(key) {
             self.c[key].is_transparent(norm_key)
         } else {
-            false
+            true
         }
     }
 
@@ -67,10 +67,6 @@ impl PointCloud {
 
     pub fn render_chunk(&self, key: &ChunkKey) -> Vec<f32> {
         self.c[key].render(self.chunk_size)
-    }
-
-    pub fn chunk_render(&self, key: &ChunkKey) -> bool {
-        self.c[key].render
     }
 
     pub fn chunk_rerender(&self, key: &ChunkKey) -> bool {
@@ -83,10 +79,6 @@ impl PointCloud {
 
     pub fn chunk_v_to_render_v(&mut self, key: &ChunkKey, idx: usize) {
         self.c.get_mut(key).unwrap().v_to_render_v(idx)
-    }
-
-    pub fn chunk_set_render(&mut self, key: &ChunkKey, render: bool) {
-        self.c.get_mut(key).unwrap().render = render
     }
 
     pub fn chunk_set_rerender(&mut self, key: &ChunkKey, rerender: bool) {
@@ -143,15 +135,23 @@ impl PointCloud {
         self.c[key].world_pos_min
     }
 
-    pub fn chunk_gen(&self, key: &ChunkKey) -> bool {
-        self.c[key].gen
-    }
-
     pub fn voxel_to_world_pos(&self, key: &ChunkKey, voxel_pos: &Vec3) -> Vec3 {
         self.c[key].voxel_to_world_pos(voxel_pos)
     }
 
     pub fn voxel_pos_in_chunk(&self, key: &ChunkKey, voxel_pos: &Vec3) -> bool {
         self.c[key].voxel_pos_in_chunk(voxel_pos, self.chunk_size)
+    }
+
+    pub fn chunk_is_visible(&self, key: &ChunkKey) -> bool {
+        if self.chunk_exists(key) {
+            self.c[key].visible
+        } else {
+            false
+        }
+    }
+
+    pub fn chunk_set_visible(&mut self, key: &ChunkKey, visible: bool) {
+        self.c.get_mut(key).unwrap().visible = visible
     }
 }

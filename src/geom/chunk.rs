@@ -13,9 +13,9 @@ pub struct Chunk {
     pub world_pos_min: Vec3,
     world_pos_max: Vec3,
     pub in_queue: bool,
-    pub render: bool,
     pub rerender: bool,
     pub gen: bool,
+    pub visible: bool,
 
     transparent_north: bool,
     transparent_east: bool,
@@ -41,9 +41,9 @@ impl Chunk {
             world_pos_min,
             world_pos_max: world_pos_min + Vec3::new(size as f32, size as f32, size as f32),
             in_queue: false,
-            render: false,
             rerender: false,
             gen: true,
+            visible: false,
 
             transparent_north: true,
             transparent_east: true,
@@ -69,9 +69,9 @@ impl Chunk {
             world_pos_min,
             world_pos_max: world_pos_min + Vec3::new(size as f32, size as f32, size as f32),
             in_queue: false,
-            render: false,
             rerender: false,
             gen: false,
+            visible: true,
 
             transparent_north: true,
             transparent_east: true,

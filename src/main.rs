@@ -177,6 +177,8 @@ fn main() {
             let active_world = world_reg.world_mut(&1);
             let cur_time = glfw.get_time();
 
+            cam.update(glfw.get_time());
+
             if last_time + tick_step <= cur_time {
                 println!(
                     "cur time: {}, last time {}, step size {}, current step {}",
@@ -186,18 +188,19 @@ fn main() {
                     cur_time - last_time
                 );
                 //Updates
-                cam.update(glfw.get_time());
                 test_time = glfw.get_time();
                 active_world.check_for_new_chunks(&cam, &tx_chunk_gen, 1);
                 println!("Check for new chunks: {}s", glfw.get_time() - test_time);
                 test_time = glfw.get_time();
                 println!("Update world: {}s", glfw.get_time() - test_time);
-                test_time = glfw.get_time();
-                active_world.render(&cam, &mut renderer);
-                println!("Render update world: {}s", glfw.get_time() - test_time);
 
                 last_time = cur_time;
             }
+
+            test_time = glfw.get_time();
+            active_world.render(&cam, &mut renderer);
+            println!("Render update world: {}s", glfw.get_time() - test_time);
+
             test_time = glfw.get_time();
             //Events
             process_events(&mut window, &events, &mut keys, &mut cursor, &mut cam);
