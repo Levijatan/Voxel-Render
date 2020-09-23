@@ -61,7 +61,7 @@ impl VoxelReg {
             return self.reg.get(key).unwrap().attributes;
         }
         VoxelAttributes {
-            transparent: false,
+            transparent: true,
             mat: Material {
                 ambient: Vec3::new(0.0, 0.0, 0.0),
                 diffuse: Vec3::new(0.0, 0.0, 0.0),
@@ -69,6 +69,10 @@ impl VoxelReg {
                 shininess: 0.0,
             },
         }
+    }
+
+    pub fn is_transparent(&self, key: &u64) -> bool {
+        self.voxel_attributes(key).transparent
     }
 
     pub fn key_from_string_id(&self, string_id: &str) -> u64 {

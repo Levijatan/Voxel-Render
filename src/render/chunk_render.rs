@@ -14,7 +14,7 @@ use std::mem;
 use std::os::raw::c_void;
 use std::ptr;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 struct ChunkData {
     key: ChunkKey,
     rendered: bool,
@@ -61,7 +61,6 @@ impl ChunkRender {
         gl::BindVertexArray(vao);
 
         gl::EnableVertexAttribArray(0);
-        gl::EnableVertexAttribArray(1);
         gl::BindVertexArray(0);
 
         let mut vbo_stack = Vec::new();
@@ -84,8 +83,8 @@ impl ChunkRender {
     }
 
     pub fn add_to_queue(&mut self, key: ChunkKey, pc: &mut PointCloud) {
-        if pc.c[&key].in_queue == false {
-            pc.c.get_mut(&key).unwrap().in_queue = true;
+        if !pc.chunk_in_queue(&key) {
+            pc.chunk_set_in_queue(&key, true);
 
             self.queue.push(ChunkData {
                 key,
@@ -98,30 +97,34 @@ impl ChunkRender {
     }
 
     pub fn remove_from_queue(&mut self, vbo: u32, key: ChunkKey, pc: &mut PointCloud) {
-        pc.c.get_mut(&key).unwrap().in_queue = false;
+        pc.chunk_set_in_queue(&key, false);
         self.vbo_stack.push(vbo);
     }
 
     pub unsafe fn process_queue(&mut self, cam: &Camera, pc: &mut PointCloud) {
         let mut done = BinaryHeap::new();
-        let half_size = pc.chunk_size as f32 / 2.0;
+        let half_size = pc.chunk_size() as f32 / 2.0;
         let half_size_vec = Vec3::new(half_size, half_size, half_size);
         while !self.queue.is_empty() {
             let mut cd = self.queue.pop().unwrap();
 
-            let c = &pc.c[&cd.key];
+            let cam_in_chunk = voxel_to_chunk_pos(&cam.pos, pc.chunk_size());
+            let chunk_pos = &pc.chunk_pos(&cd.key);
+            let distance = glm::distance(&cam_in_chunk, &chunk_pos);
+            // println!(
+            //     "distance: {}, cam pos: {}, chunk pos: {}",
+            //     distance, cam_in_chunk, chunk_pos
+            // );
+            cd.priority = distance as i32;
 
-            let cam_in_chunk = voxel_to_chunk_pos(cam.pos, pc.chunk_size) + half_size_vec;
-            cd.priority = glm::distance(&cam_in_chunk, &c.pos) as i32;
-            /*
-            println!(
-                "Rendering Chunk with {} priority, max priority: {}",
-                cd.priority, self.max_render_radius
-            );
-            */
+            // println!(
+            //     "Rendering Chunk with {} priority, max priority: {}",
+            //     cd.priority, self.max_render_radius
+            // );
 
-            if !cd.rendered {
-                let d = c.render();
+            if !cd.rendered || pc.chunk_rerender(&cd.key) {
+                pc.chunk_set_rerender(&cd.key, false);
+                let d = pc.render_chunk(&cd.key);
                 cd.rendered = true;
                 cd.amount = d.len() as i32;
                 if cd.amount > 0 {
@@ -136,8 +139,8 @@ impl ChunkRender {
                 }
             }
 
-            let chunk_world_pos = c.world_pos_min + half_size_vec;
-            if cam.cube_in_view(chunk_world_pos, c.size as f32) {
+            let chunk_world_pos = pc.chunk_world_pos_min(&cd.key) + half_size_vec;
+            if cam.cube_in_view(chunk_world_pos, pc.chunk_size() as f32) {
                 if cd.amount > 0 {
                     gl::BindBuffer(gl::ARRAY_BUFFER, cd.vbo);
                     let count = cd.amount;
@@ -146,22 +149,16 @@ impl ChunkRender {
                         3,
                         gl::FLOAT,
                         gl::FALSE,
-                        4 * mem::size_of::<GLfloat>() as i32,
+                        3 * mem::size_of::<GLfloat>() as i32,
                         ptr::null(),
                     );
-                    gl::VertexAttribPointer(
-                        1,
-                        1,
-                        gl::FLOAT,
-                        gl::FALSE,
-                        4 * mem::size_of::<GLfloat>() as i32,
-                        (3 * mem::size_of::<GLfloat>()) as *const gl::types::GLvoid,
-                    );
-                    gl::DrawArrays(gl::POINTS, 0, count / 4);
+                    gl::DrawArrays(gl::POINTS, 0, count / 3);
                     gl::BindBuffer(gl::ARRAY_BUFFER, 0);
                 }
             }
-            if cd.priority as f32 <= self.max_render_radius {
+            //println!("{:?}, max priority: {}", cd, self.max_render_radius);
+            //std::thread::sleep(std::time::Duration::from_secs(1));
+            if pc.chunk_is_visible(&cd.key) && cd.priority as f32 <= self.max_render_radius {
                 done.push(cd);
             } else {
                 self.remove_from_queue(cd.vbo, cd.key, pc);

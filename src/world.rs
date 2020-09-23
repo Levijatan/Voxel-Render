@@ -1,12 +1,12 @@
 use super::chunk_gen::ChunkNode;
 use super::chunk_gen::GenNode;
 use super::consts::OPAQUE_VOXEL;
-use super::geom::calc_idx;
 use super::geom::Chunk;
 use super::geom::ChunkKey;
 use super::geom::PointCloud;
 use super::render::Camera;
 use super::render::ChunkRender;
+use super::ChunkUpdater;
 use super::VoxelReg;
 
 use glm::{distance, Vec3};
@@ -31,13 +31,22 @@ impl WorldType for FlatWorldType {
         if pos.y == 0.0 {
             for x in 0..self.chunk_size {
                 for z in 0..self.chunk_size {
-                    let idx = calc_idx(x, 0, z, self.chunk_size);
-                    c.set_voxel_idx(idx, voxel_type);
+                    let vox_pos = Vec3::new(x as f32, 0.0, z as f32);
+                    c.set_voxel(voxel_type, &vox_pos, reg, self.chunk_size);
                 }
             }
         } else if pos.y < 0.0 {
-            for i in 0..c.tot_size {
-                c.set_voxel_idx(i, voxel_type);
+            for y in 0..self.chunk_size {
+                for x in 0..self.chunk_size {
+                    for z in 0..self.chunk_size {
+                        c.set_voxel(
+                            voxel_type,
+                            &Vec3::new(x as f32, y as f32, z as f32),
+                            reg,
+                            self.chunk_size,
+                        );
+                    }
+                }
             }
         }
         c
@@ -53,7 +62,10 @@ pub struct World {
     pub world_type: u64,
     pub active: bool,
     chunk_radius: f32,
+    cur_chunk_radius: f32,
+    cur_chunk_gen_radius: f32,
     old_cam_pos: Vec3,
+    chunk_size: usize,
 }
 
 impl World {
@@ -63,64 +75,164 @@ impl World {
             world_type,
             active,
             chunk_radius,
-            old_cam_pos: Vec3::new(99.0, 99.0, 99.0),
+            cur_chunk_radius: 0.0,
+            cur_chunk_gen_radius: 0.0,
+            old_cam_pos: Vec3::new(0.1, 0.1, 0.1),
+            chunk_size,
         }
     }
 
-    pub fn update(&mut self, reg: &VoxelReg) {
-        self.pc.update(reg);
+    pub fn render(&mut self, cam: &Camera, renderer: &mut ChunkRender) {
+        let cam_chunk_pos = super::geom::voxel_to_chunk_pos(&cam.pos, self.chunk_size);
+        let mut increase_radius = true;
+        if self.cur_chunk_radius == 0.0 {
+            increase_radius = self.render_chunk(
+                cam_chunk_pos.x as i32,
+                cam_chunk_pos.y as i32,
+                cam_chunk_pos.z as i32,
+                renderer,
+            );
+        } else {
+            let max_x = (cam_chunk_pos.x + self.cur_chunk_radius) as i32;
+            let max_y = (cam_chunk_pos.y + self.cur_chunk_radius) as i32;
+            let max_z = (cam_chunk_pos.z + self.cur_chunk_radius) as i32;
+            let min_x = (cam_chunk_pos.x - self.cur_chunk_radius) as i32;
+            let min_y = (cam_chunk_pos.y - self.cur_chunk_radius) as i32;
+            let min_z = (cam_chunk_pos.z - self.cur_chunk_radius) as i32;
+
+            for x in min_x..max_x {
+                increase_radius = self.render_chunk(x, min_y, min_z, renderer);
+                increase_radius &= self.render_chunk(x, max_y, min_z, renderer);
+                increase_radius &= self.render_chunk(x, max_y, max_z, renderer);
+                increase_radius &= self.render_chunk(x, min_y, max_z, renderer);
+            }
+
+            for y in min_y..max_y {
+                increase_radius &= self.render_chunk(min_x, y, min_z, renderer);
+                increase_radius &= self.render_chunk(max_x, y, min_z, renderer);
+                increase_radius &= self.render_chunk(max_x, y, max_z, renderer);
+                increase_radius &= self.render_chunk(min_x, y, max_z, renderer);
+            }
+
+            for z in min_z..max_z {
+                increase_radius &= self.render_chunk(min_x, min_y, z, renderer);
+                increase_radius &= self.render_chunk(max_x, min_y, z, renderer);
+                increase_radius &= self.render_chunk(max_x, max_y, z, renderer);
+                increase_radius &= self.render_chunk(min_x, max_y, z, renderer);
+            }
+        }
+        // println!(
+        //     "increase_radius: {}, cur radius: {}",
+        //     increase_radius, self.cur_chunk_radius
+        // );
+        //std::thread::sleep(std::time::Duration::from_secs(1));
+        if increase_radius && self.cur_chunk_radius < self.chunk_radius {
+            self.cur_chunk_radius += 1.0;
+        }
     }
 
-    pub fn render(&mut self, cam: &Camera, renderer: &mut ChunkRender) {
-        let cam_chunk_pos = super::geom::voxel_to_chunk_pos(cam.pos, self.pc.chunk_size);
-        let max_x = (cam_chunk_pos.x + self.chunk_radius) as i32;
-        let max_y = (cam_chunk_pos.y + self.chunk_radius) as i32;
-        let max_z = (cam_chunk_pos.z + self.chunk_radius) as i32;
-        let min_x = (cam_chunk_pos.x - self.chunk_radius) as i32;
-        let min_y = (cam_chunk_pos.y - self.chunk_radius) as i32;
-        let min_z = (cam_chunk_pos.z - self.chunk_radius) as i32;
-        for y in min_y..max_y {
-            for x in min_x..max_x {
-                for z in min_z..max_z {
-                    let key = ChunkKey { x, y, z };
-                    if self.pc.c.contains_key(&key) && !self.pc.c[&key].in_queue {
-                        renderer.add_to_queue(key, &mut self.pc);
-                    }
-                }
-            }
+    fn render_chunk(&mut self, x: i32, y: i32, z: i32, renderer: &mut ChunkRender) -> bool {
+        let key = ChunkKey { x, y, z };
+        if self.pc.chunk_exists(&key) && !self.pc.chunk_in_queue(&key) {
+            renderer.add_to_queue(key, &mut self.pc);
+            true
+        } else {
+            false
         }
     }
 
     pub fn check_for_new_chunks(&mut self, cam: &Camera, tx: &Sender<GenNode>, world_id: u64) {
-        let cam_chunk_pos = super::geom::voxel_to_chunk_pos(cam.pos, self.pc.chunk_size);
-        if self.old_cam_pos != cam_chunk_pos {
-            self.old_cam_pos = cam_chunk_pos;
-            let max_x = (cam_chunk_pos.x + self.chunk_radius) as i32;
-            let max_y = (cam_chunk_pos.y + self.chunk_radius) as i32;
-            let max_z = (cam_chunk_pos.z + self.chunk_radius) as i32;
-            let min_x = (cam_chunk_pos.x - self.chunk_radius) as i32;
-            let min_y = (cam_chunk_pos.y - self.chunk_radius) as i32;
-            let min_z = (cam_chunk_pos.z - self.chunk_radius) as i32;
-            for y in min_y..max_y {
-                for x in min_x..max_x {
-                    for z in min_z..max_z {
-                        let key = ChunkKey { x, y, z };
-                        if !self.pc.keys.contains(&key) {
-                            self.pc.keys.push(key);
-                            let pos = Vec3::new(x as f32, y as f32, z as f32);
-                            let gen = GenNode {
-                                priority: distance(&cam_chunk_pos, &pos) as i32,
-                                world_id,
-                                world_type: self.world_type,
-                                pos,
-                            };
+        let cam_chunk_pos = super::geom::voxel_to_chunk_pos(&cam.pos, self.chunk_size);
 
-                            tx.send(gen).unwrap();
-                        }
-                    }
+        if self.old_cam_pos != cam_chunk_pos || self.cur_chunk_gen_radius < self.chunk_radius {
+            let mut increase_radius = true;
+            self.old_cam_pos = cam_chunk_pos;
+            if self.cur_chunk_gen_radius == 0.0 {
+                increase_radius = self.gen_chunk(
+                    cam_chunk_pos.x as i32,
+                    cam_chunk_pos.y as i32,
+                    cam_chunk_pos.z as i32,
+                    world_id,
+                    tx,
+                    &cam_chunk_pos,
+                );
+            } else {
+                let max_x = (cam_chunk_pos.x + self.cur_chunk_gen_radius) as i32;
+                let max_y = (cam_chunk_pos.y + self.cur_chunk_gen_radius) as i32;
+                let max_z = (cam_chunk_pos.z + self.cur_chunk_gen_radius) as i32;
+                let min_x = (cam_chunk_pos.x - self.cur_chunk_gen_radius) as i32;
+                let min_y = (cam_chunk_pos.y - self.cur_chunk_gen_radius) as i32;
+                let min_z = (cam_chunk_pos.z - self.cur_chunk_gen_radius) as i32;
+
+                for x in min_x..max_x {
+                    increase_radius = self.gen_chunk(x, min_y, min_z, world_id, tx, &cam_chunk_pos);
+                    increase_radius &=
+                        self.gen_chunk(x, max_y, min_z, world_id, tx, &cam_chunk_pos);
+                    increase_radius &=
+                        self.gen_chunk(x, max_y, max_z, world_id, tx, &cam_chunk_pos);
+                    increase_radius &=
+                        self.gen_chunk(x, min_y, max_z, world_id, tx, &cam_chunk_pos);
+                }
+
+                for y in min_y..max_y {
+                    increase_radius &=
+                        self.gen_chunk(min_x, y, min_z, world_id, tx, &cam_chunk_pos);
+                    increase_radius &=
+                        self.gen_chunk(max_x, y, min_z, world_id, tx, &cam_chunk_pos);
+                    increase_radius &=
+                        self.gen_chunk(max_x, y, max_z, world_id, tx, &cam_chunk_pos);
+                    increase_radius &=
+                        self.gen_chunk(min_x, y, max_z, world_id, tx, &cam_chunk_pos);
+                }
+
+                for z in min_z..max_z {
+                    increase_radius &=
+                        self.gen_chunk(min_x, min_y, z, world_id, tx, &cam_chunk_pos);
+                    increase_radius &=
+                        self.gen_chunk(max_x, min_y, z, world_id, tx, &cam_chunk_pos);
+                    increase_radius &=
+                        self.gen_chunk(max_x, max_y, z, world_id, tx, &cam_chunk_pos);
+                    increase_radius &=
+                        self.gen_chunk(min_x, max_y, z, world_id, tx, &cam_chunk_pos);
                 }
             }
+
+            if increase_radius && self.cur_chunk_gen_radius < self.chunk_radius {
+                self.cur_chunk_gen_radius += 1.0;
+            }
         }
+    }
+
+    pub fn gen_chunk(
+        &mut self,
+        x: i32,
+        y: i32,
+        z: i32,
+        world_id: u64,
+        tx: &Sender<GenNode>,
+        cam_chunk_pos: &Vec3,
+    ) -> bool {
+        let key = ChunkKey { x, y, z };
+        if !self.pc.chunk_exists(&key) {
+            let chunk = Chunk::new_gen(self.chunk_size, x as f32, y as f32, z as f32);
+            let pos = chunk.pos;
+            self.pc.insert_chunk(key, chunk);
+            let gen = GenNode {
+                priority: distance(&cam_chunk_pos, &pos) as i32,
+                world_id,
+                world_type: self.world_type,
+                pos,
+            };
+
+            tx.send(gen).unwrap();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn chunk_size(&self) -> usize {
+        self.chunk_size
     }
 }
 
@@ -168,10 +280,6 @@ impl WorldRegistry {
         self.world_reg.insert(id, world);
     }
 
-    pub fn type_of_world(&self, world_id: u64) -> u64 {
-        self.world_reg.get(&world_id).unwrap().world_type
-    }
-
     fn get_next_world_key(&mut self) -> u64 {
         let out = self.next_world_key;
         self.next_world_key += 1;
@@ -182,7 +290,11 @@ impl WorldRegistry {
         self.world_reg.get_mut(id).unwrap()
     }
 
-    pub fn fetch_chunks_from_gen(&mut self, rx: &Receiver<ChunkNode>, reg: &VoxelReg) {
+    pub fn world(&self, id: &u64) -> &World {
+        self.world_reg.get(id).unwrap()
+    }
+
+    pub fn fetch_chunks_from_gen(&mut self, rx: &Receiver<ChunkNode>, updater: &mut ChunkUpdater) {
         match rx.try_recv() {
             Ok(node) => {
                 let key = ChunkKey::new(node.chunk.pos);
@@ -190,7 +302,8 @@ impl WorldRegistry {
                     .get_mut(&node.world_id)
                     .unwrap()
                     .pc
-                    .insert_chunk(key, node.chunk, reg);
+                    .insert_chunk(key, node.chunk);
+                updater.add_to_queue(key, node.world_id);
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {}
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {

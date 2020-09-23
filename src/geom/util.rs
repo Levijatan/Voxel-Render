@@ -1,37 +1,6 @@
 use glm::Vec3;
 
-pub fn check_start_stop(start: Vec3, stop: Vec3) -> (Vec3, Vec3) {
-    let mut out_start = Vec3::new(0.0, 0.0, 0.0);
-    let mut out_stop = Vec3::new(0.0, 0.0, 0.0);
-
-    if start.x < stop.x {
-        out_start.x = start.x;
-        out_stop.x = stop.x;
-    } else {
-        out_start.x = stop.x;
-        out_stop.x = start.x;
-    }
-
-    if start.y < stop.y {
-        out_start.y = start.y;
-        out_stop.y = stop.y;
-    } else {
-        out_start.y = stop.y;
-        out_stop.y = start.y;
-    }
-
-    if start.z < stop.z {
-        out_start.z = start.z;
-        out_stop.z = stop.z;
-    } else {
-        out_start.z = stop.z;
-        out_stop.z = start.z;
-    }
-
-    return (out_start, out_stop);
-}
-
-pub fn voxel_to_chunk_pos(voxel_pos: Vec3, chunk_size: usize) -> Vec3 {
+pub fn voxel_to_chunk_pos(voxel_pos: &Vec3, chunk_size: usize) -> Vec3 {
     let size = chunk_size as f32;
     let x = (voxel_pos.x / size).floor();
     let y = (voxel_pos.y / size).floor();
@@ -42,7 +11,10 @@ pub fn voxel_to_chunk_pos(voxel_pos: Vec3, chunk_size: usize) -> Vec3 {
 pub fn calc_idx(x: usize, y: usize, z: usize, size: usize) -> usize {
     let out = (z * size * size) + (x * size) + y;
     if out >= size * size * size {
-        panic!("Cannot use larger x,y,z than size");
+        panic!(
+            "Cannot use larger x:{}, y:{} ,z:{} than size:{}",
+            x, y, z, size
+        );
     }
     out
 }
@@ -53,4 +25,43 @@ pub fn idx_to_pos(idx: usize, size: usize) -> Vec3 {
     let x = (i % (size * size)) / size;
     let z = i / (size * size);
     Vec3::new(x as f32, y as f32, z as f32)
+}
+
+pub fn normals(i: i32) -> Vec3 {
+    match i {
+        0 => Vec3::new(1.0, 0.0, 0.0),
+        1 => Vec3::new(-1.0, 0.0, 0.0),
+        2 => Vec3::new(0.0, 1.0, 0.0),
+        3 => Vec3::new(0.0, -1.0, 0.0),
+        4 => Vec3::new(0.0, 0.0, 1.0),
+        5 => Vec3::new(0.0, 0.0, -1.0),
+        _ => panic!("Not valid use"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_voxel_to_chunk_pos() {
+        let pos = Vec3::new(17.0, 0.0, 14.0);
+        let chunk_pos = voxel_to_chunk_pos(&pos, 16);
+        assert_eq!(chunk_pos, Vec3::new(1.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn test_calc_idx() {
+        let idx = calc_idx(15, 1, 0, 16);
+        assert_eq!(idx, 241);
+    }
+
+    #[test]
+    fn test_idx_to_pos() {
+        let idx = calc_idx(15, 1, 0, 16);
+        let pos = idx_to_pos(idx, 16);
+        assert_eq!(pos.x, 15.0);
+        assert_eq!(pos.y, 1.0);
+        assert_eq!(pos.z, 0.0);
+    }
 }
