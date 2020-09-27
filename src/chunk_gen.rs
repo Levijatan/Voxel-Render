@@ -1,30 +1,23 @@
-use glm::Vec3;
 use std::cmp::Ordering;
-use std::collections::BinaryHeap;
-use std::sync::mpsc::Receiver;
-use std::sync::mpsc::Sender;
-use std::sync::{mpsc, Arc};
+use std::collections::{BinaryHeap, HashSet};
+use std::sync::mpsc::{Receiver, TryRecvError};
 use std::thread;
 
 use super::geom::Chunk;
+use super::geom::ChunkKey;
+
+use flamer::flame;
 
 #[derive(Copy, Clone, Debug)]
 pub struct GenNode {
-    pub priority: i32,
+    pub priority: u32,
     pub world_id: u64,
-    pub world_type: u64,
-    pub pos: Vec3,
-}
-
-#[derive(Debug)]
-pub struct ChunkNode {
-    pub chunk: Chunk,
-    pub world_id: u64,
+    pub key: ChunkKey,
 }
 
 impl Ord for GenNode {
     fn cmp(&self, other: &Self) -> Ordering {
-        other.priority.cmp(&self.priority)
+        self.priority.cmp(&other.priority)
     }
 }
 
@@ -43,61 +36,74 @@ impl PartialEq for GenNode {
 impl Eq for GenNode {}
 
 pub struct ChunkGen {
-    tx: Sender<ChunkNode>,
     rx: Receiver<GenNode>,
     queue: BinaryHeap<GenNode>,
-    shared_state: Arc<super::SharedState>,
+    shared_state: super::SharedState,
+    in_queue: HashSet<ChunkKey>,
 }
 
 impl ChunkGen {
-    pub fn init(shared_state: Arc<super::SharedState>) -> (Sender<GenNode>, Receiver<ChunkNode>) {
-        let (tx, rx) = mpsc::channel();
-        let (tx2, rx2) = mpsc::channel();
-        thread::spawn(move || {
-            let mut gen = ChunkGen::new(tx2, rx, shared_state);
-            gen.run();
-        });
-        (tx, rx2)
+    #[flame("ChunkGen")]
+    pub fn init(shared_state: super::SharedState, rx: Receiver<GenNode>) {
+        let mut gen = ChunkGen::new(rx, shared_state);
+        thread::Builder::new()
+            .name("ChunkGenerator".to_string())
+            .spawn(move || {
+                gen.run();
+            })
+            .unwrap();
     }
 
-    fn new(
-        tx: Sender<ChunkNode>,
-        rx: Receiver<GenNode>,
-        shared_state: Arc<super::SharedState>,
-    ) -> Self {
+    #[flame("ChunkGen")]
+    fn new(rx: Receiver<GenNode>, shared_state: super::SharedState) -> Self {
         ChunkGen {
-            tx,
             rx,
             queue: BinaryHeap::new(),
             shared_state,
+            in_queue: HashSet::new(),
         }
     }
 
+    #[flame("ChunkGen")]
     fn run(&mut self) {
-        let mut running = true;
-        while running {
+        loop {
             while !self.queue.is_empty() {
                 let node = self.queue.pop().unwrap();
-                //println!("Generating Node: {:?}", node);
-                let world_type = self
-                    .shared_state
-                    .world_type_registry
-                    .world_type_reg
-                    .get(&node.world_type)
-                    .unwrap();
-                let chunk = world_type.gen_chunk(node.pos, &self.shared_state.voxel_registry);
-                match self.tx.send(ChunkNode {
-                    chunk,
-                    world_id: node.world_id,
-                }) {
-                    Ok(_) => (),
-                    Err(_) => running = false,
-                };
+                println!("Generating: {:?}", node);
+                let world_type;
+                {
+                    let world = self.shared_state.world_registry.world(&node.world_id);
+                    world_type = self
+                        .shared_state
+                        .world_type_registry
+                        .world_type_reg
+                        .get(&world.world_type)
+                        .unwrap();
+                }
+                let voxels = world_type.gen_chunk(&node.key, &self.shared_state.voxel_registry);
+                let world = self.shared_state.world_registry.world(&node.world_id);
+                world.pc.insert_chunk(
+                    node.key,
+                    Chunk::new(
+                        world.chunk_size(),
+                        &node.key,
+                        voxels,
+                        &self.shared_state.voxel_registry,
+                    ),
+                );
+                self.in_queue.remove(&node.key);
             }
 
-            for node in self.rx.try_iter() {
-                //println!("Pushing node: {:?}", node);
-                self.queue.push(node);
+            match self.rx.try_recv() {
+                Ok(node) => {
+                    let world = self.shared_state.world_registry.world(&node.world_id);
+                    if !world.pc.chunk_exists(&node.key) && !self.in_queue.contains(&node.key) {
+                        self.queue.push(node);
+                        self.in_queue.insert(node.key);
+                    }
+                }
+                Err(TryRecvError::Empty) => {}
+                Err(TryRecvError::Disconnected) => break,
             }
         }
     }

@@ -1,186 +1,301 @@
-use std::collections::VecDeque;
+use std::collections::{BinaryHeap, HashMap};
+use std::sync::mpsc::{Receiver, Sender, TryRecvError};
+use std::thread;
 
+use glm::Vec3;
+
+use flamer::flame;
+
+use super::chunk_gen::GenNode;
 use super::geom::normals;
 use super::geom::ChunkKey;
-use super::VoxelReg;
-use super::WorldRegistry;
+use super::SharedState;
 
-#[derive(Debug, Clone)]
-struct ChunkUpdateNode {
+#[derive(Debug, Ord, Eq, PartialEq, PartialOrd)]
+pub struct ChunkTicket {
     key: ChunkKey,
+    priority: u32,
+    ttl: u32,
+    propagated: bool,
+    update_render: bool,
+    reverse_poison: i32,
     world_id: u64,
+    render: bool,
+}
+
+impl ChunkTicket {
+    #[flame("ChunkTicket")]
+    pub fn new(key: ChunkKey, priority: u32, ttl: u32, world_id: u64) -> ChunkTicket {
+        ChunkTicket {
+            key,
+            priority,
+            ttl,
+            propagated: false,
+            update_render: true,
+            reverse_poison: 6,
+            world_id,
+            render: false,
+        }
+    }
+}
+
+#[derive(Debug, Ord, Eq, PartialEq, PartialOrd)]
+struct TicketPriority {
+    priority: u32,
+    key: ChunkKey,
 }
 
 pub struct ChunkUpdater {
-    chunk_update_queue: VecDeque<ChunkUpdateNode>,
-    voxel_update_queue: VecDeque<ChunkUpdateNode>,
+    ticket_queue: BinaryHeap<TicketPriority>,
+    ticket_map: HashMap<ChunkKey, ChunkTicket>,
+    state: SharedState,
+    rx: Receiver<ChunkTicket>,
+    tx: Sender<ChunkKey>,
+    tx_chunk_gen: Sender<GenNode>,
+    old_cam_chunk_pos: Vec3,
 }
 
 impl ChunkUpdater {
-    pub fn new() -> ChunkUpdater {
+    #[flame("ChunkUpdater")]
+    pub fn new(
+        state: SharedState,
+        rx: Receiver<ChunkTicket>,
+        tx: Sender<ChunkKey>,
+        tx_chunk_gen: Sender<GenNode>,
+    ) -> ChunkUpdater {
         ChunkUpdater {
-            chunk_update_queue: VecDeque::new(),
-            voxel_update_queue: VecDeque::new(),
+            ticket_queue: BinaryHeap::new(),
+            ticket_map: HashMap::new(),
+            state,
+            rx,
+            tx,
+            tx_chunk_gen,
+            old_cam_chunk_pos: Vec3::new(0.1, 0.1, 0.1),
         }
     }
 
-    pub fn add_to_queue(&mut self, key: ChunkKey, world_id: u64) {
-        let node = ChunkUpdateNode { key, world_id };
-        self.chunk_update_queue.push_back(node);
+    #[flame("ChunkUpdater")]
+    pub fn init(
+        rx: Receiver<ChunkTicket>,
+        tx: Sender<ChunkKey>,
+        tx_chunk_gen: Sender<GenNode>,
+        state: SharedState,
+    ) {
+        thread::Builder::new()
+            .name("ChunkUpdater".to_string())
+            .spawn(move || {
+                let mut updater = ChunkUpdater::new(state, rx, tx, tx_chunk_gen);
+                updater.run();
+            })
+            .unwrap();
     }
 
-    pub fn process(&mut self, world_reg: &mut WorldRegistry, voxel_reg: &VoxelReg) {
-        self.process_chunk_queue(world_reg);
-        self.process_voxel_queue(world_reg, voxel_reg);
-    }
-
-    fn process_chunk_queue(&mut self, world_reg: &mut WorldRegistry) {
-        while !self.chunk_update_queue.is_empty() {
-            let node = self.chunk_update_queue.pop_front().unwrap();
-            let mut visible = false;
-            let world = world_reg.world_mut(&node.world_id);
-            let pos = world.pc.chunk_pos(&node.key);
-            let mut i = 0;
-            while !visible && i < 6 {
-                let norm = normals(i);
-                let n_pos = pos + norm;
-                let n_key = ChunkKey::new(n_pos);
-                if world.pc.chunk_is_transparent(&n_key, i) {
-                    visible = true;
-                    self.voxel_update_queue.push_back(node.clone());
+    #[flame("ChunkUpdater")]
+    pub fn run(&mut self) {
+        let mut last_tick = 0;
+        loop {
+            let tick = self.state.tick.read().unwrap().clone();
+            if tick != last_tick {
+                last_tick = tick;
+                match self.rx.try_recv() {
+                    Ok(ticket) => self.add_ticket(ticket),
+                    Err(TryRecvError::Empty) => {}
+                    Err(TryRecvError::Disconnected) => break,
                 }
-                i += 1;
-            }
 
-            world.pc.chunk_set_visible(&node.key, visible);
+                self.process();
+            }
         }
     }
 
-    fn process_voxel_queue(&mut self, world_reg: &mut WorldRegistry, voxel_reg: &VoxelReg) {
-        while !self.voxel_update_queue.is_empty() {
-            let node = self.voxel_update_queue.pop_front().unwrap();
-            for idx in 0..world_reg.world(&node.world_id).pc.chunk_tot_size() {
-                let mut render = false;
-                if !world_reg
-                    .world(&node.world_id)
+    #[flame("ChunkUpdater")]
+    pub fn add_ticket(&mut self, ticket: ChunkTicket) {
+        if self.ticket_map.contains_key(&ticket.key) {
+            self.ticket_map.insert(ticket.key, ticket);
+        } else {
+            self.ticket_queue.push(TicketPriority {
+                key: ticket.key,
+                priority: ticket.priority,
+            });
+            self.ticket_map.insert(ticket.key, ticket);
+        }
+    }
+
+    #[flame("ChunkUpdater")]
+    pub fn propagate_ticket(&mut self, key: &ChunkKey) {
+        if self.ticket_map[key].priority > 1 {
+            for i in 0..6 {
+                if i != self.ticket_map[key].reverse_poison {
+                    let norm = normals(i);
+                    let mut n_key = key.clone();
+                    n_key.x += norm.x as i32;
+                    n_key.y += norm.y as i32;
+                    n_key.z += norm.z as i32;
+                    self.add_ticket(ChunkTicket {
+                        key: n_key,
+                        priority: self.ticket_map[key].priority - 1,
+                        ttl: self.ticket_map[key].ttl,
+                        propagated: false,
+                        update_render: true,
+                        render: false,
+                        reverse_poison: self.ticket_map[key].reverse_poison,
+                        world_id: self.ticket_map[key].world_id,
+                    });
+                }
+            }
+        }
+        self.ticket_map.get_mut(key).unwrap().propagated = true;
+    }
+
+    #[flame("ChunkUpdater")]
+    fn update_chunk_render(&mut self, key: &ChunkKey) {
+        let mut visible = false;
+        let world = self
+            .state
+            .world_registry
+            .world(&self.ticket_map[key].world_id);
+
+        for i in 0..6 {
+            let norm = super::geom::normals(i);
+            let mut n_key = key.clone();
+            n_key.x += norm.x as i32;
+            n_key.y += norm.y as i32;
+            n_key.z += norm.z as i32;
+
+            if world.pc.chunk_is_transparent(&n_key, i) {
+                visible = true;
+                break;
+            }
+        }
+
+        self.ticket_map.get_mut(key).unwrap().render = visible;
+
+        if visible {
+            let mut render_data = Vec::new();
+            for idx in 0..world.pc.chunk_tot_size() {
+                if !world
                     .pc
-                    .voxel_in_chunk_transparency_idx(&node.key, idx, voxel_reg)
+                    .voxel_in_chunk_transparency_idx(key, idx, &self.state.voxel_registry)
                 {
-                    //let chunk = world_reg.world(&node.world_id).pc.chunk(&node.key);
-                    let world = world_reg.world(&node.world_id);
                     let pos = super::geom::idx_to_pos(idx, world.chunk_size());
-                    let mut i = 0;
-                    while i < 6 && !render {
+                    let mut render = false;
+                    for i in 0..6 {
                         let norm = normals(i);
                         let n_pos = pos + norm;
-                        if world.pc.voxel_pos_in_chunk(&node.key, &n_pos) {
-                            render = world
-                                .pc
-                                .voxel_in_chunk_transparency(&node.key, &n_pos, voxel_reg);
+                        if world.pc.voxel_pos_in_chunk(key, &n_pos) {
+                            if world.pc.voxel_in_chunk_transparency(
+                                key,
+                                &n_pos,
+                                &self.state.voxel_registry,
+                            ) {
+                                render = true;
+                                break;
+                            }
                         } else {
-                            let n_chunk = world.pc.chunk_pos(&node.key) + norm;
-                            let n_key = ChunkKey::new(n_chunk);
-                            if world.pc.chunk_exists(&n_key)
-                                && world.pc.chunk_is_transparent(&n_key, i)
-                            {
-                                let n_world_pos = world.pc.voxel_to_world_pos(&node.key, &n_pos);
-                                render = world.pc.voxel_transparency(
+                            let mut n_key = key.clone();
+                            n_key.x += norm.x as i32;
+                            n_key.y += norm.y as i32;
+                            n_key.z += norm.z as i32;
+                            if world.pc.chunk_exists(&n_key) {
+                                let n_world_pos = world.pc.voxel_to_world_pos(key, &n_pos);
+                                if world.pc.voxel_transparency(
                                     &n_world_pos,
                                     &n_key,
-                                    voxel_reg,
-                                    world.pc.chunk_size(),
-                                );
+                                    &self.state.voxel_registry,
+                                    world.chunk_size(),
+                                ) {
+                                    render = true;
+                                    break;
+                                }
+                            } else {
+                                render = true;
+                                break;
                             }
                         }
-                        i += 1;
+                    }
+
+                    if render {
+                        let world_pos = world.pc.voxel_to_world_pos(key, &pos);
+                        render_data.push(world_pos.x);
+                        render_data.push(world_pos.y);
+                        render_data.push(world_pos.z);
                     }
                 }
-                if render {
-                    world_reg
-                        .world_mut(&node.world_id)
-                        .pc
-                        .chunk_v_to_render_v(&node.key, idx);
-                }
+            }
+            drop(world);
+            if render_data.len() > 0 {
+                let w = self
+                    .state
+                    .world_registry
+                    .world(&self.ticket_map[key].world_id);
+                w.pc.chunk_set_render_data(key, render_data);
             }
         }
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::geom::Chunk;
-    use crate::World;
-    use glm::Vec3;
-
-    #[test]
-    fn test_add_to_queue() {
-        let mut updater = ChunkUpdater::new();
-        assert!(updater.voxel_update_queue.len() == 0);
-        assert!(updater.chunk_update_queue.len() == 0);
-        let key = ChunkKey { x: 0, y: 0, z: 0 };
-        let world_id = 0;
-        updater.add_to_queue(key, world_id);
-        assert!(updater.chunk_update_queue.len() == 1);
-        assert!(updater.voxel_update_queue.len() == 0);
-
-        let node = updater.chunk_update_queue.pop_front().unwrap();
-        assert_eq!(key, node.key);
-        assert_eq!(world_id, node.world_id);
+    #[flame("ChunkUpdater")]
+    fn process_check_if_new_chunk(&mut self, key: &ChunkKey) -> bool {
+        let ticket = self.ticket_map.get(key).unwrap();
+        let world = self.state.world_registry.world(&ticket.world_id);
+        if !world.pc.chunk_exists(&ticket.key) {
+            self.tx_chunk_gen
+                .send(GenNode {
+                    priority: ticket.priority - 1,
+                    world_id: ticket.world_id,
+                    key: ticket.key,
+                })
+                .unwrap();
+            true
+        } else {
+            false
+        }
     }
 
-    #[test]
-    fn test_process_chunk_queue_empty() {
-        let mut world_reg = WorldRegistry::new();
-        let mut updater = ChunkUpdater::new();
+    #[flame("ChunkUpdater")]
+    pub fn process(&mut self) {
+        println!("Chunk Ticket Queue Len: {}", self.ticket_queue.len());
+        {
+            let cam_chunk_pos = self.state.cam_chunk_pos.read().unwrap();
+            if *cam_chunk_pos != self.old_cam_chunk_pos {
+                let mut reset_render = self.state.clear_render.write().unwrap();
+                *reset_render = true;
+            }
+        }
 
-        assert!(updater.voxel_update_queue.len() == 0);
-        assert!(updater.chunk_update_queue.len() == 0);
-        updater.process_chunk_queue(&mut world_reg);
-        assert!(updater.voxel_update_queue.len() == 0);
-        assert!(updater.chunk_update_queue.len() == 0);
-    }
+        if !self.ticket_queue.is_empty() {
+            let mut next_queue = BinaryHeap::new();
+            while !self.ticket_queue.is_empty() {
+                let ticket_priority = self.ticket_queue.pop().unwrap();
+                self.ticket_map.get_mut(&ticket_priority.key).unwrap().ttl -= 1;
+                if !self.process_check_if_new_chunk(&ticket_priority.key) {
+                    if !self.ticket_map[&ticket_priority.key].propagated {
+                        self.propagate_ticket(&ticket_priority.key);
+                    }
 
-    #[test]
-    fn test_process_chunk_queue_one_visible_chunk_empty() {
-        let mut reg = VoxelReg::new();
-        reg.register_voxel_type(
-            crate::consts::TRANSPARENT_VOXEL,
-            true,
-            crate::voxel_registry::Material {
-                ambient: Vec3::new(0.0, 0.0, 0.0),
-                diffuse: Vec3::new(0.0, 0.0, 0.0),
-                specular: Vec3::new(0.0, 0.0, 0.0),
-                shininess: 0.0,
-            },
-        );
+                    if self.ticket_map[&ticket_priority.key].update_render {
+                        self.update_chunk_render(&ticket_priority.key);
+                    }
 
-        reg.register_voxel_type(
-            crate::consts::OPAQUE_VOXEL,
-            false,
-            crate::voxel_registry::Material {
-                ambient: Vec3::new(1.0, 1.0, 1.0),
-                diffuse: Vec3::new(0.8, 0.8, 0.8),
-                specular: Vec3::new(0.5, 0.8, 0.1),
-                shininess: 0.1,
-            },
-        );
+                    if self.ticket_map[&ticket_priority.key].render {
+                        self.tx.send(ticket_priority.key).unwrap();
+                    }
+                }
 
-        let mut world_reg = WorldRegistry::new();
-        let chunk_size = 16;
-        let mut world = World::new(true, chunk_size, 0, 8.0);
-        let key = ChunkKey { x: 0, y: 0, z: 0 };
-        let chunk = Chunk::new(chunk_size, 0.0, 0.0, 0.0, &reg);
-        world.pc.insert_chunk(key, chunk);
-        world_reg.new_world(world);
-        let mut updater = ChunkUpdater::new();
-        updater.add_to_queue(key, 1);
-        assert!(world_reg.world(&1).pc.chunk_is_visible(&key));
-        assert!(updater.chunk_update_queue.len() == 1);
-        assert!(updater.voxel_update_queue.len() == 0);
-        updater.process_chunk_queue(&mut world_reg);
-        assert!(world_reg.world(&1).pc.chunk_is_visible(&key));
-        assert!(updater.chunk_update_queue.len() == 0);
-        assert!(updater.voxel_update_queue.len() == 1);
+                if self.ticket_map[&ticket_priority.key].ttl > 0 {
+                    next_queue.push(TicketPriority {
+                        key: self.ticket_map[&ticket_priority.key].key,
+                        priority: self.ticket_map[&ticket_priority.key].priority,
+                    });
+                } else {
+                    self.ticket_map.remove(&ticket_priority.key);
+                }
+            }
+            self.ticket_queue = next_queue;
+        }
+
+        if *self.state.clear_render.read().unwrap() {
+            let mut reset_render = self.state.clear_render.write().unwrap();
+            *reset_render = false;
+        }
     }
 }

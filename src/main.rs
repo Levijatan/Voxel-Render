@@ -5,17 +5,26 @@
     clippy::nursery,
     clippy::cargo
 )]
+extern crate dashmap;
 extern crate gl;
 extern crate glfw;
 extern crate image;
 extern crate nalgebra_glm as glm;
 
+extern crate flame;
+
+extern crate flamer;
+
+use flame as f;
+use flamer::flame;
+
 use glfw::{Action, Context, Key};
 use glm::{Vec2, Vec3};
 
 use std::ffi::CString;
+use std::fs::File;
 use std::sync::mpsc::Receiver;
-use std::sync::Arc;
+use std::sync::{mpsc, Arc, RwLock};
 
 mod chunk_gen;
 mod chunk_updater;
@@ -29,7 +38,9 @@ mod voxel_registry;
 mod world;
 
 use chunk_gen::ChunkGen;
+use chunk_updater::ChunkTicket;
 use chunk_updater::ChunkUpdater;
+use geom::ChunkKey;
 use input::CursorState;
 use input::KeyState;
 use render::Camera;
@@ -52,11 +63,19 @@ const WINDOW_NAME: &'static str = "Voxel Renderer";
 const VOXEL_SIZE: f32 = 1.0;
 const CHUNK_SIZE: usize = 16;
 
+#[derive(Clone)]
 pub struct SharedState {
-    voxel_registry: VoxelReg,
-    world_type_registry: WorldTypeRegistry,
+    voxel_registry: Arc<VoxelReg>,
+    world_type_registry: Arc<WorldTypeRegistry>,
+    world_registry: Arc<WorldRegistry>,
+    tick: Arc<RwLock<u32>>,
+    active_world: Arc<RwLock<u64>>,
+    cam_chunk_pos: Arc<RwLock<Vec3>>,
+    clear_render: Arc<RwLock<bool>>,
+    chunk_size: Arc<usize>,
 }
 
+#[flame]
 fn main() {
     //GLFW init
     let mut glfw = glfw::init(glfw::FAIL_ON_ERRORS).unwrap();
@@ -126,14 +145,19 @@ fn main() {
         chunk_size: CHUNK_SIZE,
     }));
 
-    let shared_state = Arc::new(SharedState {
-        voxel_registry: voxreg,
-        world_type_registry: world_type_reg,
-    });
-
     let mut world_reg = WorldRegistry::new();
+    let active_world = world_reg.new_world(World::new(true, CHUNK_SIZE, 1));
 
-    world_reg.new_world(World::new(true, CHUNK_SIZE, 1, 2.0));
+    let shared_state = SharedState {
+        voxel_registry: Arc::new(voxreg),
+        world_type_registry: Arc::new(world_type_reg),
+        world_registry: Arc::new(world_reg),
+        tick: Arc::new(RwLock::new(1)),
+        cam_chunk_pos: Arc::new(RwLock::new(cam.chunk_pos(CHUNK_SIZE))),
+        active_world: Arc::new(RwLock::new(active_world)),
+        clear_render: Arc::new(RwLock::new(true)),
+        chunk_size: Arc::new(CHUNK_SIZE),
+    };
 
     //Camera Movement
     let mut keys = KeyState::new();
@@ -147,18 +171,26 @@ fn main() {
     keys.add_state(Key::LeftShift, Camera::move_down);
 
     //World Gen
-
-    let (tx_chunk_gen, rx_chunk) = ChunkGen::init(shared_state.clone());
-    let mut updater = ChunkUpdater::new();
+    let (tx_chunk_gen, rx_chunk_gen) = mpsc::channel();
+    let (tx_chunk_ticket, rx_chunk_ticket) = mpsc::channel();
+    let (tx_render, rx_render) = mpsc::channel();
+    ChunkGen::init(shared_state.clone(), rx_chunk_gen);
+    ChunkUpdater::init(
+        rx_chunk_ticket,
+        tx_render,
+        tx_chunk_gen,
+        shared_state.clone(),
+    );
 
     //Render setup
     let mut renderer: ChunkRender;
+
     unsafe {
+        renderer = ChunkRender::new(&shared_state, rx_render);
         program.use_program();
         gl::ClearColor(1.0, 1.0, 1.0, 1.0);
         gl::Enable(gl::DEPTH_TEST);
         gl::Enable(gl::PROGRAM_POINT_SIZE);
-        renderer = ChunkRender::new(2.0);
     }
 
     generate_texture("src/texture/T_UV_Map.jpg".to_string());
@@ -167,16 +199,11 @@ fn main() {
     let tick_step = 1.0 / ticks_per_second;
 
     let mut last_time = 0.0;
+    let mut last_ticket_tick = 0;
 
     while !window.should_close() {
-        let mut test_time: f64;
-
         {
-            updater.process(&mut world_reg, &shared_state.voxel_registry);
-
-            let active_world = world_reg.world_mut(&1);
             let cur_time = glfw.get_time();
-
             cam.update(glfw.get_time());
 
             if last_time + tick_step <= cur_time {
@@ -187,28 +214,32 @@ fn main() {
                     tick_step,
                     cur_time - last_time
                 );
-                //Updates
-                test_time = glfw.get_time();
-                active_world.check_for_new_chunks(&cam, &tx_chunk_gen, 1);
-                println!("Check for new chunks: {}s", glfw.get_time() - test_time);
-                test_time = glfw.get_time();
-                println!("Update world: {}s", glfw.get_time() - test_time);
+                let mut tick = shared_state.tick.write().unwrap();
+                *tick = tick.wrapping_add(1);
 
+                let mut cam_chunk_pos = shared_state.cam_chunk_pos.write().unwrap();
+                *cam_chunk_pos = cam.chunk_pos(CHUNK_SIZE);
                 last_time = cur_time;
             }
 
-            test_time = glfw.get_time();
-            active_world.render(&cam, &mut renderer);
-            println!("Render update world: {}s", glfw.get_time() - test_time);
+            if *shared_state.tick.read().unwrap() >= last_ticket_tick + 20 {
+                let cam_chunk_pos = cam.chunk_pos(CHUNK_SIZE);
+                let key = ChunkKey::new(cam_chunk_pos);
+                tx_chunk_ticket
+                    .send(ChunkTicket::new(
+                        key,
+                        5,
+                        20,
+                        *shared_state.active_world.read().unwrap(),
+                    ))
+                    .unwrap();
+                last_ticket_tick = *shared_state.tick.read().unwrap();
+            }
 
-            test_time = glfw.get_time();
             //Events
             process_events(&mut window, &events, &mut keys, &mut cursor, &mut cam);
             keys.process_all_states(&mut cam);
 
-            println!("Event processing: {}s", glfw.get_time() - test_time);
-
-            test_time = glfw.get_time();
             //Render
             unsafe {
                 gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
@@ -225,18 +256,16 @@ fn main() {
                 program.set_mat4(&CString::new("invP").unwrap(), &inv_p);
                 program.set_mat4(&CString::new("invMv").unwrap(), &inv_mv);
                 program.set_vec2(&CString::new("screenSize").unwrap(), &screen_size);
-                renderer.process_queue(&cam, &mut active_world.pc);
+                renderer.process(&cam);
             }
         }
-        println!("Render: {}s", glfw.get_time() - test_time);
         window.swap_buffers();
         glfw.poll_events();
-        test_time = glfw.get_time();
-        world_reg.fetch_chunks_from_gen(&rx_chunk, &mut updater);
-        println!("Fetching Chunks from gen: {}s", glfw.get_time() - test_time);
     }
+    f::dump_html(File::create("flamegraph.html").unwrap()).unwrap();
 }
 
+#[flame]
 fn process_events(
     window: &mut glfw::Window,
     events: &Receiver<(f64, glfw::WindowEvent)>,
