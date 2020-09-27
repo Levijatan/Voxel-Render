@@ -2,6 +2,10 @@ use std::collections::{BinaryHeap, HashMap};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::thread;
 
+use glm::Vec3;
+
+use flamer::flame;
+
 use super::chunk_gen::GenNode;
 use super::geom::normals;
 use super::geom::ChunkKey;
@@ -20,6 +24,7 @@ pub struct ChunkTicket {
 }
 
 impl ChunkTicket {
+    #[flame("ChunkTicket")]
     pub fn new(key: ChunkKey, priority: u32, ttl: u32, world_id: u64) -> ChunkTicket {
         ChunkTicket {
             key,
@@ -47,9 +52,11 @@ pub struct ChunkUpdater {
     rx: Receiver<ChunkTicket>,
     tx: Sender<ChunkKey>,
     tx_chunk_gen: Sender<GenNode>,
+    old_cam_chunk_pos: Vec3,
 }
 
 impl ChunkUpdater {
+    #[flame("ChunkUpdater")]
     pub fn new(
         state: SharedState,
         rx: Receiver<ChunkTicket>,
@@ -63,9 +70,11 @@ impl ChunkUpdater {
             rx,
             tx,
             tx_chunk_gen,
+            old_cam_chunk_pos: Vec3::new(0.1, 0.1, 0.1),
         }
     }
 
+    #[flame("ChunkUpdater")]
     pub fn init(
         rx: Receiver<ChunkTicket>,
         tx: Sender<ChunkKey>,
@@ -81,6 +90,7 @@ impl ChunkUpdater {
             .unwrap();
     }
 
+    #[flame("ChunkUpdater")]
     pub fn run(&mut self) {
         let mut last_tick = 0;
         loop {
@@ -98,6 +108,7 @@ impl ChunkUpdater {
         }
     }
 
+    #[flame("ChunkUpdater")]
     pub fn add_ticket(&mut self, ticket: ChunkTicket) {
         if self.ticket_map.contains_key(&ticket.key) {
             self.ticket_map.insert(ticket.key, ticket);
@@ -110,6 +121,7 @@ impl ChunkUpdater {
         }
     }
 
+    #[flame("ChunkUpdater")]
     pub fn propagate_ticket(&mut self, key: &ChunkKey) {
         if self.ticket_map[key].priority > 1 {
             for i in 0..6 {
@@ -135,6 +147,7 @@ impl ChunkUpdater {
         self.ticket_map.get_mut(key).unwrap().propagated = true;
     }
 
+    #[flame("ChunkUpdater")]
     fn update_chunk_render(&mut self, key: &ChunkKey) {
         let mut visible = false;
         let world_reg = self.state.world_registry.read().unwrap();
@@ -217,6 +230,7 @@ impl ChunkUpdater {
         }
     }
 
+    #[flame("ChunkUpdater")]
     fn process_check_if_new_chunk(&mut self, key: &ChunkKey) -> bool {
         let world_reg = self.state.world_registry.read().unwrap();
         let ticket = self.ticket_map.get(key).unwrap();
@@ -235,14 +249,19 @@ impl ChunkUpdater {
         }
     }
 
+    #[flame("ChunkUpdater")]
     pub fn process(&mut self) {
         println!("Chunk Ticket Queue Len: {}", self.ticket_queue.len());
-        if !self.ticket_queue.is_empty() {
-            let mut next_queue = BinaryHeap::new();
-            {
+        {
+            let cam_chunk_pos = self.state.cam_chunk_pos.read().unwrap();
+            if *cam_chunk_pos != self.old_cam_chunk_pos {
                 let mut reset_render = self.state.clear_render.write().unwrap();
                 *reset_render = true;
             }
+        }
+
+        if !self.ticket_queue.is_empty() {
+            let mut next_queue = BinaryHeap::new();
             while !self.ticket_queue.is_empty() {
                 let ticket_priority = self.ticket_queue.pop().unwrap();
                 self.ticket_map.get_mut(&ticket_priority.key).unwrap().ttl -= 1;
@@ -270,6 +289,11 @@ impl ChunkUpdater {
                 }
             }
             self.ticket_queue = next_queue;
+        }
+
+        if *self.state.clear_render.read().unwrap() {
+            let mut reset_render = self.state.clear_render.write().unwrap();
+            *reset_render = false;
         }
     }
 }

@@ -2,12 +2,16 @@ use image::GenericImageView;
 
 use std::os::raw::c_void;
 
+use flamer::flame;
+
+#[flame]
 pub fn read_texture(path: String) -> (Vec<u8>, u32, u32) {
     let img = image::open(path).unwrap();
     let (width, height) = img.dimensions();
     (img.to_bytes(), width, height)
 }
 
+#[flame]
 pub fn generate_texture(path: String) -> u32 {
     let (img, width, height) = read_texture(path);
     let mut texture: u32 = 0;

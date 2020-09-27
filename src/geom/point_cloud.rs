@@ -4,6 +4,7 @@ use crate::VoxelReg;
 use std::collections::HashMap;
 use std::fmt;
 
+use flamer::flame;
 use glm::Vec3;
 
 #[derive(Hash, Eq, PartialEq, Debug, Copy, Clone, PartialOrd, Ord)]
@@ -20,6 +21,7 @@ impl fmt::Display for ChunkKey {
 }
 
 impl ChunkKey {
+    #[flame("ChunkKey")]
     pub fn new(point: Vec3) -> ChunkKey {
         return ChunkKey {
             x: point.x as i32,
@@ -37,6 +39,7 @@ pub struct PointCloud {
 }
 
 impl PointCloud {
+    #[flame("PointCloud")]
     pub fn new(chunk_size: usize) -> PointCloud {
         return PointCloud {
             c: HashMap::new(),
@@ -45,18 +48,22 @@ impl PointCloud {
         };
     }
 
+    #[flame("PointCloud")]
     pub fn insert_chunk(&mut self, key: ChunkKey, c: Chunk) {
         self.c.insert(key, c);
     }
 
+    #[flame("PointCloud")]
     pub fn chunk_exists(&self, key: &ChunkKey) -> bool {
         self.c.contains_key(key)
     }
 
+    #[flame("PointCloud")]
     pub fn chunk_set_render_data(&mut self, key: &ChunkKey, render_data: Vec<f32>) {
         self.c.get_mut(key).unwrap().set_render_data(render_data);
     }
 
+    #[flame("PointCloud")]
     pub fn chunk_is_transparent(&self, key: &ChunkKey, norm_key: i32) -> bool {
         if self.chunk_exists(key) {
             self.c[key].is_transparent(norm_key)
@@ -65,14 +72,17 @@ impl PointCloud {
         }
     }
 
+    #[flame("PointCloud")]
     pub fn chunk_pos(&self, key: &ChunkKey) -> Vec3 {
         self.c[key].pos
     }
 
+    #[flame("PointCloud")]
     pub fn chunk_tot_size(&self) -> usize {
         self.tot_chunk_size
     }
 
+    #[flame("PointCloud")]
     pub fn voxel_in_chunk_transparency(
         &self,
         key: &ChunkKey,
@@ -88,6 +98,7 @@ impl PointCloud {
         self.voxel_in_chunk_transparency_idx(key, idx, reg)
     }
 
+    #[flame("PointCloud")]
     pub fn voxel_in_chunk_transparency_idx(
         &self,
         key: &ChunkKey,
@@ -97,6 +108,7 @@ impl PointCloud {
         self.c[key].check_voxel_in_chunk_transparency_idx(idx, reg)
     }
 
+    #[flame("PointCloud")]
     pub fn voxel_transparency(
         &self,
         voxel_world_pos: &Vec3,
@@ -107,22 +119,27 @@ impl PointCloud {
         self.c[key].check_voxel_transparency(voxel_world_pos, reg, chunk_size)
     }
 
+    #[flame("PointCloud")]
     pub fn chunk_size(&self) -> usize {
         self.chunk_size
     }
 
+    #[flame("PointCloud")]
     pub fn chunk_world_pos_min(&self, key: &ChunkKey) -> Vec3 {
         self.c[key].world_pos_min
     }
 
+    #[flame("PointCloud")]
     pub fn voxel_to_world_pos(&self, key: &ChunkKey, voxel_pos: &Vec3) -> Vec3 {
         self.c[key].voxel_to_world_pos(voxel_pos)
     }
 
+    #[flame("PointCloud")]
     pub fn voxel_pos_in_chunk(&self, key: &ChunkKey, voxel_pos: &Vec3) -> bool {
         self.c[key].voxel_pos_in_chunk(voxel_pos, self.chunk_size)
     }
 
+    #[flame("PointCloud")]
     pub fn chunk_render(&self, key: &ChunkKey) -> &Vec<f32> {
         &self.c[key].get_render_date()
     }

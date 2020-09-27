@@ -10,10 +10,18 @@ extern crate glfw;
 extern crate image;
 extern crate nalgebra_glm as glm;
 
+extern crate flame;
+
+extern crate flamer;
+
+use flame as f;
+use flamer::flame;
+
 use glfw::{Action, Context, Key};
 use glm::{Vec2, Vec3};
 
 use std::ffi::CString;
+use std::fs::File;
 use std::sync::mpsc::Receiver;
 use std::sync::{mpsc, Arc, RwLock};
 
@@ -61,10 +69,12 @@ pub struct SharedState {
     world_registry: Arc<RwLock<WorldRegistry>>,
     tick: Arc<RwLock<u32>>,
     active_world: Arc<RwLock<u64>>,
-    cam: Arc<RwLock<Camera>>,
+    cam_chunk_pos: Arc<RwLock<Vec3>>,
     clear_render: Arc<RwLock<bool>>,
+    chunk_size: Arc<usize>,
 }
 
+#[flame]
 fn main() {
     //GLFW init
     let mut glfw = glfw::init(glfw::FAIL_ON_ERRORS).unwrap();
@@ -98,7 +108,7 @@ fn main() {
 
     //Setings init
     let screen_size = Vec2::new(SCREEN_WIDTH as f32, SCREEN_HEIGHT as f32);
-    let cam = Camera::new(
+    let mut cam = Camera::new(
         glm::vec3(0.0, 5.0, 0.0),
         glm::vec3(0.0, 1.0, 0.0),
         20.0,
@@ -142,9 +152,10 @@ fn main() {
         world_type_registry: Arc::new(world_type_reg),
         world_registry: Arc::new(RwLock::new(world_reg)),
         tick: Arc::new(RwLock::new(1)),
-        cam: Arc::new(RwLock::new(cam)),
+        cam_chunk_pos: Arc::new(RwLock::new(cam.chunk_pos(CHUNK_SIZE))),
         active_world: Arc::new(RwLock::new(active_world)),
         clear_render: Arc::new(RwLock::new(true)),
+        chunk_size: Arc::new(CHUNK_SIZE),
     };
 
     //Camera Movement
@@ -192,10 +203,7 @@ fn main() {
     while !window.should_close() {
         {
             let cur_time = glfw.get_time();
-            {
-                let mut c = shared_state.cam.write().unwrap();
-                c.update(glfw.get_time());
-            }
+            cam.update(glfw.get_time());
 
             if last_time + tick_step <= cur_time {
                 println!(
@@ -207,12 +215,14 @@ fn main() {
                 );
                 let mut tick = shared_state.tick.write().unwrap();
                 *tick = tick.wrapping_add(1);
+
+                let mut cam_chunk_pos = shared_state.cam_chunk_pos.write().unwrap();
+                *cam_chunk_pos = cam.chunk_pos(CHUNK_SIZE);
                 last_time = cur_time;
             }
 
             if *shared_state.tick.read().unwrap() >= last_ticket_tick + 20 {
-                let cam = shared_state.cam.read().unwrap();
-                let cam_chunk_pos = geom::voxel_to_chunk_pos(&cam.pos, CHUNK_SIZE);
+                let cam_chunk_pos = cam.chunk_pos(CHUNK_SIZE);
                 let key = ChunkKey::new(cam_chunk_pos);
                 tx_chunk_ticket
                     .send(ChunkTicket::new(
@@ -226,21 +236,16 @@ fn main() {
             }
 
             //Events
-            {
-                let mut c = shared_state.cam.write().unwrap();
-                process_events(&mut window, &events, &mut keys, &mut cursor, &mut c);
-                keys.process_all_states(&mut c);
-            }
+            process_events(&mut window, &events, &mut keys, &mut cursor, &mut cam);
+            keys.process_all_states(&mut cam);
 
             //Render
             unsafe {
                 gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
                 gl::BindVertexArray(renderer.vao);
 
-                let c = shared_state.cam.read().unwrap();
-
-                let mv = c.view();
-                let p = c.projection();
+                let mv = cam.view();
+                let p = cam.projection();
                 let mvp = p * mv;
                 let inv_p = glm::inverse(&p);
                 let inv_mv = glm::inverse(&mv);
@@ -250,14 +255,16 @@ fn main() {
                 program.set_mat4(&CString::new("invP").unwrap(), &inv_p);
                 program.set_mat4(&CString::new("invMv").unwrap(), &inv_mv);
                 program.set_vec2(&CString::new("screenSize").unwrap(), &screen_size);
-                renderer.process();
+                renderer.process(&cam);
             }
         }
         window.swap_buffers();
         glfw.poll_events();
     }
+    f::dump_html(File::create("flamegraph.html").unwrap()).unwrap();
 }
 
+#[flame]
 fn process_events(
     window: &mut glfw::Window,
     events: &Receiver<(f64, glfw::WindowEvent)>,

@@ -1,5 +1,8 @@
 use glm::Vec3;
 
+use flamer::flame;
+
+#[flame("geom::util")]
 pub fn voxel_to_chunk_pos(voxel_pos: &Vec3, chunk_size: usize) -> Vec3 {
     let size = chunk_size as f32;
     let x = (voxel_pos.x / size).floor();
@@ -8,6 +11,7 @@ pub fn voxel_to_chunk_pos(voxel_pos: &Vec3, chunk_size: usize) -> Vec3 {
     return Vec3::new(x, y, z);
 }
 
+#[flame("geom::util")]
 pub fn calc_idx(x: usize, y: usize, z: usize, size: usize) -> usize {
     let out = (z * size * size) + (x * size) + y;
     if out >= size * size * size {
@@ -19,6 +23,7 @@ pub fn calc_idx(x: usize, y: usize, z: usize, size: usize) -> usize {
     out
 }
 
+#[flame("geom::util")]
 pub fn idx_to_pos(idx: usize, size: usize) -> Vec3 {
     let i = idx;
     let y = i % size;
@@ -27,6 +32,7 @@ pub fn idx_to_pos(idx: usize, size: usize) -> Vec3 {
     Vec3::new(x as f32, y as f32, z as f32)
 }
 
+#[flame("geom::util")]
 pub fn normals(i: i32) -> Vec3 {
     match i {
         0 => Vec3::new(1.0, 0.0, 0.0),

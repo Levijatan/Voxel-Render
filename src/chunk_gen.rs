@@ -6,6 +6,8 @@ use std::thread;
 use super::geom::Chunk;
 use super::geom::ChunkKey;
 
+use flamer::flame;
+
 #[derive(Copy, Clone, Debug)]
 pub struct GenNode {
     pub priority: u32,
@@ -41,6 +43,7 @@ pub struct ChunkGen {
 }
 
 impl ChunkGen {
+    #[flame("ChunkGen")]
     pub fn init(shared_state: super::SharedState, rx: Receiver<GenNode>) {
         thread::Builder::new()
             .name("ChunkGenerator".to_string())
@@ -51,6 +54,7 @@ impl ChunkGen {
             .unwrap();
     }
 
+    #[flame("ChunkGen")]
     fn new(rx: Receiver<GenNode>, shared_state: super::SharedState) -> Self {
         ChunkGen {
             rx,
@@ -60,6 +64,7 @@ impl ChunkGen {
         }
     }
 
+    #[flame("ChunkGen")]
     fn run(&mut self) {
         loop {
             while !self.queue.is_empty() {

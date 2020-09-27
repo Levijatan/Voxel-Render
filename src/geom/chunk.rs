@@ -5,6 +5,8 @@ use crate::VoxelReg;
 
 use glm::Vec3;
 
+use flamer::flame;
+
 #[derive(Debug)]
 pub struct Chunk {
     v: Vec<u64>,
@@ -24,6 +26,7 @@ pub struct Chunk {
 }
 
 impl Chunk {
+    #[flame("Chunk")]
     pub fn new(size: usize, key: &ChunkKey, v: Vec<u64>, vox_reg: &VoxelReg) -> Chunk {
         let rx = (key.x * size as i32) as f32;
         let ry = (key.y * size as i32) as f32;
@@ -56,6 +59,7 @@ impl Chunk {
         c
     }
 
+    #[flame("Chunk")]
     pub fn set_voxel(
         &mut self,
         voxel_type: u64,
@@ -68,14 +72,17 @@ impl Chunk {
         self.update_transparency(&voxel_type, &in_chunk_pos, chunk_size, vox_reg)
     }
 
+    #[flame("Chunk")]
     pub fn set_render_data(&mut self, render_data: Vec<f32>) {
         self.render_data = render_data;
     }
 
+    #[flame("Chunk")]
     pub fn get_render_date(&self) -> &Vec<f32> {
         &self.render_data
     }
 
+    #[flame("Chunk")]
     fn calc_idx_point(&self, point: &Vec3, chunk_size: usize) -> usize {
         super::calc_idx(
             point.x as usize,
@@ -85,15 +92,18 @@ impl Chunk {
         )
     }
 
+    #[flame("Chunk")]
     pub fn voxel_to_world_pos(&self, pos: &Vec3) -> Vec3 {
         pos + self.world_pos_min
     }
 
+    #[flame("Chunk")]
     pub fn check_voxel_transparency(&self, pos: &Vec3, reg: &VoxelReg, chunk_size: usize) -> bool {
         let in_chunk_pos = pos - self.world_pos_min;
         self.check_voxel_in_chunk_transparency(&in_chunk_pos, reg, chunk_size)
     }
 
+    #[flame("Chunk")]
     pub fn check_voxel_in_chunk_transparency(
         &self,
         pos: &Vec3,
@@ -104,12 +114,14 @@ impl Chunk {
         self.check_voxel_in_chunk_transparency_idx(idx, reg)
     }
 
+    #[flame("Chunk")]
     pub fn check_voxel_in_chunk_transparency_idx(&self, idx: usize, reg: &VoxelReg) -> bool {
         let vox_type = self.v[idx as usize];
         reg.is_transparent(&vox_type)
     }
 
     //Norm is the normal key (see normals() in geom::utils) used to generate the the key to find this chunk
+    #[flame("Chunk")]
     pub fn is_transparent(&self, norm: i32) -> bool {
         match norm {
             0 => self.transparent_west,
@@ -122,6 +134,7 @@ impl Chunk {
         }
     }
 
+    #[flame("Chunk")]
     fn update_transparency(
         &mut self,
         voxel_type: &u64,
@@ -230,6 +243,7 @@ impl Chunk {
         }
     }
 
+    #[flame("Chunk")]
     pub fn voxel_pos_in_chunk(&self, pos: &Vec3, chunk_size: usize) -> bool {
         let size = chunk_size as f32;
         if pos.x >= size || pos.x < 0.0 {
