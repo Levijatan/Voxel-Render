@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashSet};
-use std::sync::mpsc::Receiver;
+use std::sync::mpsc::{Receiver, TryRecvError};
 use std::thread;
 
 use super::geom::Chunk;
@@ -45,10 +45,10 @@ pub struct ChunkGen {
 impl ChunkGen {
     #[flame("ChunkGen")]
     pub fn init(shared_state: super::SharedState, rx: Receiver<GenNode>) {
+        let mut gen = ChunkGen::new(rx, shared_state);
         thread::Builder::new()
             .name("ChunkGenerator".to_string())
             .spawn(move || {
-                let mut gen = ChunkGen::new(rx, shared_state);
                 gen.run();
             })
             .unwrap();
@@ -94,12 +94,16 @@ impl ChunkGen {
                 self.in_queue.remove(&node.key);
             }
 
-            for node in self.rx.try_iter() {
-                let world = self.shared_state.world_registry.world(&node.world_id);
-                if !world.pc.chunk_exists(&node.key) && !self.in_queue.contains(&node.key) {
-                    self.queue.push(node);
-                    self.in_queue.insert(node.key);
+            match self.rx.try_recv() {
+                Ok(node) => {
+                    let world = self.shared_state.world_registry.world(&node.world_id);
+                    if !world.pc.chunk_exists(&node.key) && !self.in_queue.contains(&node.key) {
+                        self.queue.push(node);
+                        self.in_queue.insert(node.key);
+                    }
                 }
+                Err(TryRecvError::Empty) => {}
+                Err(TryRecvError::Disconnected) => break,
             }
         }
     }
