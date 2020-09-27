@@ -72,8 +72,7 @@ impl ChunkGen {
                 println!("Generating: {:?}", node);
                 let world_type;
                 {
-                    let world_reg = self.shared_state.world_registry.read().unwrap();
-                    let world = world_reg.world(&node.world_id);
+                    let world = self.shared_state.world_registry.world(&node.world_id);
                     world_type = self
                         .shared_state
                         .world_type_registry
@@ -82,8 +81,7 @@ impl ChunkGen {
                         .unwrap();
                 }
                 let voxels = world_type.gen_chunk(&node.key, &self.shared_state.voxel_registry);
-                let mut world_reg = self.shared_state.world_registry.write().unwrap();
-                let world = world_reg.world_mut(&node.world_id);
+                let world = self.shared_state.world_registry.world(&node.world_id);
                 world.pc.insert_chunk(
                     node.key,
                     Chunk::new(
@@ -95,9 +93,9 @@ impl ChunkGen {
                 );
                 self.in_queue.remove(&node.key);
             }
-            let world_reg = self.shared_state.world_registry.read().unwrap();
+
             for node in self.rx.try_iter() {
-                let world = world_reg.world(&node.world_id);
+                let world = self.shared_state.world_registry.world(&node.world_id);
                 if !world.pc.chunk_exists(&node.key) && !self.in_queue.contains(&node.key) {
                     self.queue.push(node);
                     self.in_queue.insert(node.key);

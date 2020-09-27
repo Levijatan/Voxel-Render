@@ -153,8 +153,7 @@ impl ChunkRender {
     #[flame("ChunkRender")]
     fn chunk_render_data(&mut self, key: &ChunkKey) -> Vec<f32> {
         let world_id = *self.state.active_world.read().unwrap();
-        let world_reg = self.state.world_registry.read().unwrap();
-        let active_world = world_reg.world(&world_id);
+        let active_world = self.state.world_registry.world(&world_id);
         active_world.pc.chunk_render(&key).clone()
     }
 

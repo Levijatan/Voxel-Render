@@ -5,6 +5,7 @@
     clippy::nursery,
     clippy::cargo
 )]
+extern crate dashmap;
 extern crate gl;
 extern crate glfw;
 extern crate image;
@@ -66,7 +67,7 @@ const CHUNK_SIZE: usize = 16;
 pub struct SharedState {
     voxel_registry: Arc<VoxelReg>,
     world_type_registry: Arc<WorldTypeRegistry>,
-    world_registry: Arc<RwLock<WorldRegistry>>,
+    world_registry: Arc<WorldRegistry>,
     tick: Arc<RwLock<u32>>,
     active_world: Arc<RwLock<u64>>,
     cam_chunk_pos: Arc<RwLock<Vec3>>,
@@ -150,7 +151,7 @@ fn main() {
     let shared_state = SharedState {
         voxel_registry: Arc::new(voxreg),
         world_type_registry: Arc::new(world_type_reg),
-        world_registry: Arc::new(RwLock::new(world_reg)),
+        world_registry: Arc::new(world_reg),
         tick: Arc::new(RwLock::new(1)),
         cam_chunk_pos: Arc::new(RwLock::new(cam.chunk_pos(CHUNK_SIZE))),
         active_world: Arc::new(RwLock::new(active_world)),

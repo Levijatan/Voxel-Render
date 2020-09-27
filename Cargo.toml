@@ -10,6 +10,7 @@ gl = "0.14.0"
 image = "0.23.9"
 flame = "0.2.2"
 flamer = "0.3"
+dashmap = "3.11.10"
 
 [dependencies.glfw]
 git = "https://github.com/bjz/glfw-rs.git"

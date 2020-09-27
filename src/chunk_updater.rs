@@ -150,8 +150,10 @@ impl ChunkUpdater {
     #[flame("ChunkUpdater")]
     fn update_chunk_render(&mut self, key: &ChunkKey) {
         let mut visible = false;
-        let world_reg = self.state.world_registry.read().unwrap();
-        let world = world_reg.world(&self.ticket_map[key].world_id);
+        let world = self
+            .state
+            .world_registry
+            .world(&self.ticket_map[key].world_id);
 
         for i in 0..6 {
             let norm = super::geom::normals(i);
@@ -221,10 +223,11 @@ impl ChunkUpdater {
                 }
             }
             drop(world);
-            drop(world_reg);
             if render_data.len() > 0 {
-                let mut wr = self.state.world_registry.write().unwrap();
-                let w = wr.world_mut(&self.ticket_map[key].world_id);
+                let w = self
+                    .state
+                    .world_registry
+                    .world(&self.ticket_map[key].world_id);
                 w.pc.chunk_set_render_data(key, render_data);
             }
         }
@@ -232,9 +235,8 @@ impl ChunkUpdater {
 
     #[flame("ChunkUpdater")]
     fn process_check_if_new_chunk(&mut self, key: &ChunkKey) -> bool {
-        let world_reg = self.state.world_registry.read().unwrap();
         let ticket = self.ticket_map.get(key).unwrap();
-        let world = world_reg.world(&ticket.world_id);
+        let world = self.state.world_registry.world(&ticket.world_id);
         if !world.pc.chunk_exists(&ticket.key) {
             self.tx_chunk_gen
                 .send(GenNode {

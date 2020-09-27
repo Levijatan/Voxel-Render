@@ -1,7 +1,7 @@
 use super::Chunk;
 use crate::VoxelReg;
 
-use std::collections::HashMap;
+use dashmap::DashMap;
 use std::fmt;
 
 use flamer::flame;
@@ -33,7 +33,7 @@ impl ChunkKey {
 
 #[derive(Debug)]
 pub struct PointCloud {
-    c: HashMap<ChunkKey, Chunk>,
+    c: DashMap<ChunkKey, Chunk>,
     chunk_size: usize,
     tot_chunk_size: usize,
 }
@@ -42,14 +42,14 @@ impl PointCloud {
     #[flame("PointCloud")]
     pub fn new(chunk_size: usize) -> PointCloud {
         return PointCloud {
-            c: HashMap::new(),
+            c: DashMap::new(),
             chunk_size,
             tot_chunk_size: chunk_size * chunk_size * chunk_size,
         };
     }
 
     #[flame("PointCloud")]
-    pub fn insert_chunk(&mut self, key: ChunkKey, c: Chunk) {
+    pub fn insert_chunk(&self, key: ChunkKey, c: Chunk) {
         self.c.insert(key, c);
     }
 
@@ -59,14 +59,14 @@ impl PointCloud {
     }
 
     #[flame("PointCloud")]
-    pub fn chunk_set_render_data(&mut self, key: &ChunkKey, render_data: Vec<f32>) {
+    pub fn chunk_set_render_data(&self, key: &ChunkKey, render_data: Vec<f32>) {
         self.c.get_mut(key).unwrap().set_render_data(render_data);
     }
 
     #[flame("PointCloud")]
     pub fn chunk_is_transparent(&self, key: &ChunkKey, norm_key: i32) -> bool {
         if self.chunk_exists(key) {
-            self.c[key].is_transparent(norm_key)
+            self.c.get(key).unwrap().is_transparent(norm_key)
         } else {
             true
         }
@@ -74,7 +74,7 @@ impl PointCloud {
 
     #[flame("PointCloud")]
     pub fn chunk_pos(&self, key: &ChunkKey) -> Vec3 {
-        self.c[key].pos
+        self.c.get(key).unwrap().pos
     }
 
     #[flame("PointCloud")]
@@ -105,7 +105,10 @@ impl PointCloud {
         idx: usize,
         reg: &VoxelReg,
     ) -> bool {
-        self.c[key].check_voxel_in_chunk_transparency_idx(idx, reg)
+        self.c
+            .get(key)
+            .unwrap()
+            .check_voxel_in_chunk_transparency_idx(idx, reg)
     }
 
     #[flame("PointCloud")]
@@ -116,7 +119,10 @@ impl PointCloud {
         reg: &VoxelReg,
         chunk_size: usize,
     ) -> bool {
-        self.c[key].check_voxel_transparency(voxel_world_pos, reg, chunk_size)
+        self.c
+            .get(key)
+            .unwrap()
+            .check_voxel_transparency(voxel_world_pos, reg, chunk_size)
     }
 
     #[flame("PointCloud")]
@@ -126,21 +132,24 @@ impl PointCloud {
 
     #[flame("PointCloud")]
     pub fn chunk_world_pos_min(&self, key: &ChunkKey) -> Vec3 {
-        self.c[key].world_pos_min
+        self.c.get(key).unwrap().world_pos_min
     }
 
     #[flame("PointCloud")]
     pub fn voxel_to_world_pos(&self, key: &ChunkKey, voxel_pos: &Vec3) -> Vec3 {
-        self.c[key].voxel_to_world_pos(voxel_pos)
+        self.c.get(key).unwrap().voxel_to_world_pos(voxel_pos)
     }
 
     #[flame("PointCloud")]
     pub fn voxel_pos_in_chunk(&self, key: &ChunkKey, voxel_pos: &Vec3) -> bool {
-        self.c[key].voxel_pos_in_chunk(voxel_pos, self.chunk_size)
+        self.c
+            .get(key)
+            .unwrap()
+            .voxel_pos_in_chunk(voxel_pos, self.chunk_size)
     }
 
     #[flame("PointCloud")]
-    pub fn chunk_render(&self, key: &ChunkKey) -> &Vec<f32> {
-        &self.c[key].get_render_date()
+    pub fn chunk_render(&self, key: &ChunkKey) -> Vec<f32> {
+        self.c.get(key).unwrap().get_render_date().clone()
     }
 }
