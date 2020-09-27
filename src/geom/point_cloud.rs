@@ -45,12 +45,16 @@ impl PointCloud {
         };
     }
 
-    pub fn insert_chunk(&mut self, key: ChunkKey, chunk: Chunk) {
-        self.c.insert(key, chunk);
+    pub fn insert_chunk(&mut self, key: ChunkKey, c: Chunk) {
+        self.c.insert(key, c);
     }
 
     pub fn chunk_exists(&self, key: &ChunkKey) -> bool {
-        self.c.contains_key(key) && !self.c[key].gen
+        self.c.contains_key(key)
+    }
+
+    pub fn chunk_set_render_data(&mut self, key: &ChunkKey, render_data: Vec<f32>) {
+        self.c.get_mut(key).unwrap().set_render_data(render_data);
     }
 
     pub fn chunk_is_transparent(&self, key: &ChunkKey, norm_key: i32) -> bool {
@@ -63,30 +67,6 @@ impl PointCloud {
 
     pub fn chunk_pos(&self, key: &ChunkKey) -> Vec3 {
         self.c[key].pos
-    }
-
-    pub fn render_chunk(&self, key: &ChunkKey) -> Vec<f32> {
-        self.c[key].render(self.chunk_size)
-    }
-
-    pub fn chunk_rerender(&self, key: &ChunkKey) -> bool {
-        self.c[key].rerender
-    }
-
-    pub fn chunk_in_queue(&self, key: &ChunkKey) -> bool {
-        self.c[key].in_queue
-    }
-
-    pub fn chunk_v_to_render_v(&mut self, key: &ChunkKey, idx: usize) {
-        self.c.get_mut(key).unwrap().v_to_render_v(idx)
-    }
-
-    pub fn chunk_set_rerender(&mut self, key: &ChunkKey, rerender: bool) {
-        self.c.get_mut(key).unwrap().rerender = rerender
-    }
-
-    pub fn chunk_set_in_queue(&mut self, key: &ChunkKey, in_queue: bool) {
-        self.c.get_mut(key).unwrap().in_queue = in_queue
     }
 
     pub fn chunk_tot_size(&self) -> usize {
@@ -143,15 +123,7 @@ impl PointCloud {
         self.c[key].voxel_pos_in_chunk(voxel_pos, self.chunk_size)
     }
 
-    pub fn chunk_is_visible(&self, key: &ChunkKey) -> bool {
-        if self.chunk_exists(key) {
-            self.c[key].visible
-        } else {
-            false
-        }
-    }
-
-    pub fn chunk_set_visible(&mut self, key: &ChunkKey, visible: bool) {
-        self.c.get_mut(key).unwrap().visible = visible
+    pub fn chunk_render(&self, key: &ChunkKey) -> &Vec<f32> {
+        &self.c[key].get_render_date()
     }
 }
