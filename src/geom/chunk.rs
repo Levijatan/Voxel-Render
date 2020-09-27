@@ -11,11 +11,7 @@ use flamer::flame;
 pub struct Chunk {
     v: Vec<u64>,
     render_data: Vec<f32>,
-    pub pos: Vec3,
     pub world_pos_min: Vec3,
-    world_pos_max: Vec3,
-    pub gen: bool,
-    pub visible: bool,
 
     transparent_north: bool,
     transparent_east: bool,
@@ -36,11 +32,7 @@ impl Chunk {
 
         let mut c = Chunk {
             v,
-            pos: Vec3::new(key.x as f32, key.y as f32, key.z as f32),
             world_pos_min,
-            world_pos_max: world_pos_min + Vec3::new(size as f32, size as f32, size as f32),
-            gen: false,
-            visible: true,
             render_data: Vec::new(),
 
             transparent_north: true,
@@ -57,19 +49,6 @@ impl Chunk {
             c.update_transparency(&vox_type, &pos, size, vox_reg)
         }
         c
-    }
-
-    #[flame("Chunk")]
-    pub fn set_voxel(
-        &mut self,
-        voxel_type: u64,
-        in_chunk_pos: &Vec3,
-        vox_reg: &VoxelReg,
-        chunk_size: usize,
-    ) {
-        let idx = self.calc_idx_point(in_chunk_pos, chunk_size);
-        self.v[idx] = voxel_type;
-        self.update_transparency(&voxel_type, &in_chunk_pos, chunk_size, vox_reg)
     }
 
     #[flame("Chunk")]

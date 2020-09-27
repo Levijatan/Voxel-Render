@@ -131,11 +131,6 @@ impl WorldRegistry {
     }
 
     #[flame("WorldRegistry")]
-    pub fn world_mut(&mut self, id: &u64) -> &mut World {
-        self.world_reg.get_mut(id).unwrap()
-    }
-
-    #[flame("WorldRegistry")]
     pub fn world(&self, id: &u64) -> &World {
         self.world_reg.get(id).unwrap()
     }
