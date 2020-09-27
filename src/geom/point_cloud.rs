@@ -73,11 +73,6 @@ impl PointCloud {
     }
 
     #[flame("PointCloud")]
-    pub fn chunk_pos(&self, key: &ChunkKey) -> Vec3 {
-        self.c.get(key).unwrap().pos
-    }
-
-    #[flame("PointCloud")]
     pub fn chunk_tot_size(&self) -> usize {
         self.tot_chunk_size
     }
@@ -123,16 +118,6 @@ impl PointCloud {
             .get(key)
             .unwrap()
             .check_voxel_transparency(voxel_world_pos, reg, chunk_size)
-    }
-
-    #[flame("PointCloud")]
-    pub fn chunk_size(&self) -> usize {
-        self.chunk_size
-    }
-
-    #[flame("PointCloud")]
-    pub fn chunk_world_pos_min(&self, key: &ChunkKey) -> Vec3 {
-        self.c.get(key).unwrap().world_pos_min
     }
 
     #[flame("PointCloud")]
