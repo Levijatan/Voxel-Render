@@ -1,21 +1,23 @@
-use std::f32;
-use std::f32::consts::PI;
+use super::consts::opengl_to_wgpu_matrix;
 
-use glm::{Mat4, Vec3};
+use std::f32::consts::FRAC_PI_2;
+use std::time::Duration;
+use winit::dpi::LogicalPosition;
+use winit::event::*;
 
 use flamer::flame;
 
-struct Frustum {
+pub struct Frustum {
     sphere_factor_x: f32,
     sphere_factor_y: f32,
     tang: f32,
-    x: Vec3,
-    y: Vec3,
-    z: Vec3,
+    x: glm::Vec3,
+    y: glm::Vec3,
+    z: glm::Vec3,
 }
 
 #[derive(PartialEq)]
-enum FrustumPos {
+pub enum FrustumPos {
     INSIDE,
     OUTSIDE,
     INTERSECTS,
@@ -26,11 +28,11 @@ impl Frustum {
     pub fn new(
         fov: f32,
         aspect_ratio: f32,
-        cam_pos: Vec3,
-        cam_target: Vec3,
-        cam_dir: Vec3,
+        cam_pos: glm::Vec3,
+        cam_target: glm::Vec3,
+        cam_dir: glm::Vec3,
     ) -> Frustum {
-        let angle = fov * (PI / 360.0);
+        let angle = fov.to_radians();
         let tang = angle.tan();
         let anglex = (tang * aspect_ratio).atan();
         let z = glm::normalize(&(cam_pos - cam_target));
@@ -46,7 +48,7 @@ impl Frustum {
     }
 
     #[flame("Frustum")]
-    pub fn update(&mut self, cam_pos: Vec3, cam_target: Vec3, cam_dir: Vec3) {
+    pub fn update(&mut self, cam_pos: glm::Vec3, cam_target: glm::Vec3, cam_dir: glm::Vec3) {
         self.z = glm::normalize(&(cam_pos - cam_target));
         self.x = glm::normalize(&cam_dir.cross(&self.z));
         self.y = self.z.cross(&self.x);
@@ -56,8 +58,8 @@ impl Frustum {
     #[flame("Frustum")]
     pub fn point(
         &self,
-        p: Vec3,
-        cam_pos: Vec3,
+        p: glm::Vec3,
+        cam_pos: glm::Vec3,
         far_plane: f32,
         near_plane: f32,
         ratio: f32,
@@ -87,9 +89,9 @@ impl Frustum {
     #[flame("Frustum")]
     pub fn sphere(
         &self,
-        center: Vec3,
+        center: glm::Vec3,
         radius: f32,
-        cam_pos: Vec3,
+        cam_pos: glm::Vec3,
         far_plane: f32,
         near_plane: f32,
         ratio: f32,
@@ -129,9 +131,9 @@ impl Frustum {
     #[flame("Frustum")]
     pub fn cube(
         &self,
-        center: Vec3,
+        center: glm::Vec3,
         size: f32,
-        cam_pos: Vec3,
+        cam_pos: glm::Vec3,
         far_plane: f32,
         near_plane: f32,
         ratio: f32,
@@ -142,177 +144,160 @@ impl Frustum {
 }
 
 pub struct Camera {
-    pub pos: Vec3,
-    pub front: Vec3,
-    pub up: Vec3,
-    pub fov: f32,
-    pub near_plane: f32,
-    pub far_plane: f32,
-    pub aspect_ratio: f32,
-    speed_const: f32,
-    speed: f32,
-    frustum: Frustum,
-    pub delta_time: f64,
-    last_frame: f64,
+    pub pos: glm::Vec3,
     yaw: f32,
     pitch: f32,
 }
 
 impl Camera {
-    #[flame("Camera")]
-    pub fn new(
-        pos: Vec3,
-        up: Vec3,
-        speed: f32,
-        fov: f32,
-        near_plane: f32,
-        far_plane: f32,
-        aspect_ratio: f32,
-    ) -> Camera {
-        let front = Vec3::new(0.0, 0.0, -1.0);
+    pub fn new(pos: glm::Vec3, yaw: f32, pitch: f32) -> Camera {
         return Camera {
             pos,
-            front,
-            up,
-            speed_const: speed,
-            fov,
-            near_plane,
-            far_plane,
-            aspect_ratio,
-            frustum: Frustum::new(fov, aspect_ratio, pos, pos + front, up),
-            delta_time: 0.0,
-            last_frame: 0.0,
-            speed: 0.0,
-            yaw: 0.0,
-            pitch: 0.0,
+            yaw: yaw.to_radians(),
+            pitch: pitch.to_radians(),
         };
     }
 
-    #[flame("Camera")]
-    pub fn chunk_pos(&self, chunk_size: usize) -> Vec3 {
-        crate::geom::voxel_to_chunk_pos(&self.pos, chunk_size)
-    }
-
-    #[flame("Camera")]
-    pub fn update(&mut self, time: f64) {
-        let current_frame = time;
-        self.delta_time = current_frame - self.last_frame;
-        self.last_frame = current_frame;
-        self.speed = self.speed_const * self.delta_time as f32;
-    }
-
-    #[flame("Camera")]
-    pub fn view(&self) -> Mat4 {
-        glm::look_at(&self.pos, &(self.pos + self.front), &self.up)
-    }
-
-    #[flame("Camera")]
-    pub fn projection(&self) -> Mat4 {
-        return glm::perspective(
-            self.fov * PI / 180.0,
-            self.aspect_ratio,
-            self.near_plane,
-            self.far_plane,
-        );
-    }
-
-    #[flame("Camera")]
-    pub fn rotate(&mut self, x_offset: f32, y_offset: f32) {
-        self.yaw += x_offset;
-        self.pitch += y_offset;
-        if self.pitch > 89.0 {
-            self.pitch = 89.0;
-        }
-        if self.pitch < -89.0 {
-            self.pitch = -89.0;
-        }
-        let front_dir = Vec3::new(
-            self.yaw.to_radians().cos() * self.pitch.to_radians().cos(),
-            self.pitch.to_radians().sin(),
-            self.yaw.to_radians().sin() * self.pitch.to_radians().cos(),
+    pub fn calc_matrix(&self) -> glm::Mat4 {
+        glm::look_at(
+            &self.pos,
+            &(self.pos + glm::vec3(self.yaw.cos(), self.pitch.sin(), self.yaw.sin()).normalize()),
+            &glm::vec3(0.0, 1.0, 0.0),
         )
-        .normalize();
-        self.front = front_dir;
-        self.update_frustum();
+    }
+}
+
+pub struct Projection {
+    aspect: f32,
+    fovy: f32,
+    znear: f32,
+    zfar: f32,
+}
+
+impl Projection {
+    pub fn new(width: u32, height: u32, fovy: f32, znear: f32, zfar: f32) -> Self {
+        Self {
+            aspect: width as f32 / height as f32,
+            fovy: fovy.to_radians(),
+            znear,
+            zfar,
+        }
     }
 
-    #[flame("Camera")]
-    pub fn update_frustum(&mut self) {
-        self.frustum
-            .update(self.pos, self.pos + self.front, self.up);
+    pub fn resize(&mut self, width: u32, height: u32) {
+        self.aspect = width as f32 / height as f32;
     }
 
-    #[flame("Camera")]
-    pub fn move_forward(cam: &mut Camera) {
-        cam.pos += cam.front * cam.speed;
-        cam.update_frustum();
+    pub fn calc_matrix(&self) -> glm::Mat4 {
+        opengl_to_wgpu_matrix() * glm::perspective(self.aspect, self.fovy, self.znear, self.zfar)
+    }
+}
+
+pub struct CameraController {
+    amount_left: f32,
+    amount_right: f32,
+    amount_forward: f32,
+    amount_backward: f32,
+    amount_up: f32,
+    amount_down: f32,
+    rotate_horizontal: f32,
+    rotate_vertical: f32,
+    scroll: f32,
+    speed: f32,
+    sensitivity: f32,
+}
+
+impl CameraController {
+    pub fn new(speed: f32, sensitivity: f32) -> Self {
+        Self {
+            amount_left: 0.0,
+            amount_right: 0.0,
+            amount_forward: 0.0,
+            amount_backward: 0.0,
+            amount_up: 0.0,
+            amount_down: 0.0,
+            rotate_horizontal: 0.0,
+            rotate_vertical: 0.0,
+            scroll: 0.0,
+            speed,
+            sensitivity,
+        }
     }
 
-    #[flame("Camera")]
-    pub fn move_back(cam: &mut Camera) {
-        cam.pos -= cam.front * cam.speed;
-        cam.update_frustum();
+    pub fn process_keyboard(&mut self, key: VirtualKeyCode, state: ElementState) -> bool {
+        let amount = if state == ElementState::Pressed {
+            1.0
+        } else {
+            0.0
+        };
+        match key {
+            VirtualKeyCode::W | VirtualKeyCode::Up => {
+                self.amount_forward = amount;
+                true
+            }
+            VirtualKeyCode::S | VirtualKeyCode::Down => {
+                self.amount_backward = amount;
+                true
+            }
+            VirtualKeyCode::A | VirtualKeyCode::Left => {
+                self.amount_left = amount;
+                true
+            }
+            VirtualKeyCode::D | VirtualKeyCode::Right => {
+                self.amount_right = amount;
+                true
+            }
+            VirtualKeyCode::Space => {
+                self.amount_up = amount;
+                true
+            }
+            VirtualKeyCode::LShift => {
+                self.amount_down = amount;
+                true
+            }
+            _ => false,
+        }
     }
 
-    #[flame("Camera")]
-    pub fn move_left(cam: &mut Camera) {
-        cam.pos -= glm::normalize(&cam.front.cross(&cam.up)) * cam.speed;
-        cam.update_frustum();
+    pub fn process_scroll(&mut self, delta: &MouseScrollDelta) {
+        self.scroll = match delta {
+            // I'm assuming a line is about 100 pixels
+            MouseScrollDelta::LineDelta(_, scroll) => scroll * 100.0,
+            MouseScrollDelta::PixelDelta(LogicalPosition { y: scroll, .. }) => *scroll as f32,
+        };
     }
 
-    #[flame("Camera")]
-    pub fn move_right(cam: &mut Camera) {
-        cam.pos += glm::normalize(&cam.front.cross(&cam.up)) * cam.speed;
-        cam.update_frustum();
+    pub fn process_mouse(&mut self, mouse_dx: f64, mouse_dy: f64) {
+        self.rotate_horizontal = mouse_dx as f32;
+        self.rotate_vertical = mouse_dy as f32;
     }
 
-    #[flame("Camera")]
-    pub fn move_up(cam: &mut Camera) {
-        cam.pos += cam.up * cam.speed;
-        cam.update_frustum();
-    }
+    pub fn update_camera(&mut self, camera: &mut Camera, dt: Duration) {
+        let dt = dt.as_secs_f32();
 
-    #[flame("Camera")]
-    pub fn move_down(cam: &mut Camera) {
-        cam.pos -= cam.up * cam.speed;
-        cam.update_frustum();
-    }
+        let (yaw_sin, yaw_cos) = camera.yaw.sin_cos();
+        let forward = glm::vec3(yaw_cos, 0.0, yaw_sin).normalize();
+        let right = glm::vec3(-yaw_sin, 0.0, yaw_cos).normalize();
+        camera.pos += forward * (self.amount_forward - self.amount_backward) * self.speed * dt;
+        camera.pos += right * (self.amount_right - self.amount_left) * self.speed * dt;
 
-    #[allow(dead_code)]
-    #[flame("Camera")]
-    pub fn point_in_view(&self, p: Vec3) -> bool {
-        self.frustum.point(
-            p,
-            self.pos,
-            self.far_plane,
-            self.near_plane,
-            self.aspect_ratio,
-        ) == FrustumPos::INSIDE
-    }
+        let (pitch_sin, pitch_cos) = camera.pitch.sin_cos();
+        let scrollward = glm::vec3(pitch_cos * yaw_cos, pitch_sin, pitch_cos * yaw_sin).normalize();
+        camera.pos += scrollward * self.scroll * self.speed * self.sensitivity * dt;
+        self.scroll = 0.0;
 
-    #[allow(dead_code)]
-    #[flame("Camera")]
-    pub fn sphere_in_view(&self, center: Vec3, radius: f32) -> bool {
-        self.frustum.sphere(
-            center,
-            radius,
-            self.pos,
-            self.far_plane,
-            self.near_plane,
-            self.aspect_ratio,
-        ) != FrustumPos::OUTSIDE
-    }
+        camera.pos.y += (self.amount_up - self.amount_down) * self.speed * dt;
 
-    #[allow(dead_code)]
-    #[flame("Camera")]
-    pub fn cube_in_view(&self, center: Vec3, size: f32) -> bool {
-        self.frustum.cube(
-            center,
-            size,
-            self.pos,
-            self.far_plane,
-            self.near_plane,
-            self.aspect_ratio,
-        ) != FrustumPos::OUTSIDE
+        camera.yaw += self.rotate_horizontal * self.sensitivity * dt;
+        camera.pitch += -self.rotate_vertical * self.sensitivity * dt;
+
+        self.rotate_horizontal = 0.0;
+        self.rotate_vertical = 0.0;
+
+        if camera.pitch < -FRAC_PI_2 {
+            camera.pitch = -FRAC_PI_2;
+        } else if camera.pitch > FRAC_PI_2 {
+            camera.pitch = FRAC_PI_2;
+        }
     }
 }

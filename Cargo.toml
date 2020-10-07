@@ -5,15 +5,29 @@ authors = ["Levijatan <aasmunjr@uio.no>"]
 edition = "2018"
 
 [dependencies]
-nalgebra-glm = "0.8.0"
-gl = "0.14.0"
-image = "0.23.9"
-flame = "0.2.2"
+arrayvec = "0.5.1"
+nalgebra-glm = "0.8"
+image = "0.23"
+flame = "0.2"
 flamer = "0.3"
-dashmap = "3.11.10"
+dashmap = "3.11"
+winit = "0.22"
+env_logger = "0.7"
+log = "0.4"
+wgpu = "0.6"
+futures = "0.3"
+bytemuck = "1.4"
+anyhow = "1.0"
+tobj = "2.0"
+rayon = "1.4"
+legion = "0.3.1"
 
-[dependencies.glfw]
-git = "https://github.com/bjz/glfw-rs.git"
+[build-dependencies]
+anyhow = "1.0"
+fs_extra = "1.1"
+glob = "0.3"
+rayon = "1.4"
+shaderc = "0.6"
 
 [profile.dev.package.voxel-render]
 opt-level = 0

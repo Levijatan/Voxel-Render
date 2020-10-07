@@ -49,6 +49,7 @@ impl WorldType for FlatWorldType {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct World {
     pub pc: PointCloud,
     pub world_type: u64,

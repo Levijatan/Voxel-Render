@@ -1,10 +1,10 @@
 use crate::Camera;
 use std::collections::HashMap;
 
-use glfw::Key;
+use winit::event::VirtualKeyCode;
 
 pub struct KeyState<'a> {
-    key_state: HashMap<Key, State<'a>>,
+    key_state: HashMap<VirtualKeyCode, State<'a>>,
 }
 
 pub struct State<'a> {
@@ -27,7 +27,7 @@ impl<'a> KeyState<'a> {
         }
     }
 
-    pub fn add_state(&mut self, k: Key, action: impl FnMut(&mut Camera) + 'a) {
+    pub fn add_state(&mut self, k: VirtualKeyCode, action: impl FnMut(&mut Camera) + 'a) {
         self.key_state.entry(k).or_insert(State {
             held: false,
             action: Box::new(action),
@@ -40,7 +40,7 @@ impl<'a> KeyState<'a> {
         }
     }
 
-    pub fn set_state(&mut self, k: Key, held: bool) {
+    pub fn set_state(&mut self, k: VirtualKeyCode, held: bool) {
         if self.key_state.contains_key(&k) {
             self.key_state.get_mut(&k).unwrap().held = held;
         }
