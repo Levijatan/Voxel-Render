@@ -1,53 +1,89 @@
-use glm::Vec3;
-
-use flamer::flame;
-
-use crate::consts::CHUNK_SIZE;
-
-#[flame("geom::util")]
-pub fn voxel_to_chunk_pos(voxel_pos: &Vec3) -> Vec3 {
-    let size = CHUNK_SIZE as f32;
+#[allow(dead_code)]
+pub fn voxel_to_chunk_pos(voxel_pos: &glm::Vec3) -> glm::Vec3 {
+    let size = crate::consts::CHUNK_SIZE_F32;
     let x = (voxel_pos.x / size).floor();
     let y = (voxel_pos.y / size).floor();
     let z = (voxel_pos.z / size).floor();
-    return Vec3::new(x, y, z);
+    glm::vec3(x, y, z)
 }
 
-#[flame("geom::util")]
 pub fn calc_idx(x: usize, y: usize, z: usize) -> usize {
-    let out = (z * CHUNK_SIZE * CHUNK_SIZE) + (x * CHUNK_SIZE) + y;
-    if out >= CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE {
+    let size = crate::consts::CHUNK_SIZE_USIZE;
+    let out = (z * size * size) + (x * size) + y;
+    if out >= size * size * size {
         panic!(
             "Cannot use larger x:{}, y:{} ,z:{} than size:{}",
-            x, y, z, CHUNK_SIZE
+            x, y, z, size
         );
     }
     out
 }
 
-pub fn calc_idx_pos(pos: &Vec3) -> usize {
+pub fn calc_idx_pos(pos: &glm::Vec3) -> usize {
     calc_idx(pos.x as usize, pos.y as usize, pos.z as usize)
 }
 
-#[flame("geom::util")]
-pub fn idx_to_pos(idx: usize) -> Vec3 {
+pub fn idx_to_pos(idx: usize) -> glm::Vec3 {
+    let size = crate::consts::CHUNK_SIZE_USIZE;
     let i = idx;
-    let y = i % CHUNK_SIZE;
-    let x = (i % (CHUNK_SIZE * CHUNK_SIZE)) / CHUNK_SIZE;
-    let z = i / (CHUNK_SIZE * CHUNK_SIZE);
-    Vec3::new(x as f32, y as f32, z as f32)
+    let y = i % size;
+    let x = (i % (size * size)) / size;
+    let z = i / (size * size);
+    glm::vec3(x as f32, y as f32, z as f32)
 }
 
-#[flame("geom::util")]
-pub fn normals(i: i32) -> Vec3 {
-    match i {
-        0 => Vec3::new(1.0, 0.0, 0.0),
-        1 => Vec3::new(-1.0, 0.0, 0.0),
-        2 => Vec3::new(0.0, 1.0, 0.0),
-        3 => Vec3::new(0.0, -1.0, 0.0),
-        4 => Vec3::new(0.0, 0.0, 1.0),
-        5 => Vec3::new(0.0, 0.0, -1.0),
-        _ => panic!("Not valid use"),
+#[derive(Clone, Debug, PartialEq)]
+pub enum Direction {
+    East,
+    West,
+    Up,
+    Down,
+    North,
+    South,
+}
+
+pub const ALL_DIRECTIONS: [Direction; 6] = [
+    Direction::East,
+    Direction::West,
+    Direction::Up,
+    Direction::Down,
+    Direction::North,
+    Direction::South,
+];
+
+pub fn normals_f32(dir: &Direction) -> glm::Vec3 {
+    use Direction::*;
+    match dir {
+        East => glm::vec3(1.0, 0.0, 0.0),
+        West => glm::vec3(-1.0, 0.0, 0.0),
+        Up => glm::vec3(0.0, 1.0, 0.0),
+        Down => glm::vec3(0.0, -1.0, 0.0),
+        North => glm::vec3(0.0, 0.0, 1.0),
+        South => glm::vec3(0.0, 0.0, -1.0),
+    }
+}
+
+pub fn normals_i64(dir: &Direction) -> glm::TVec3<i64> {
+    use Direction::*;
+    match dir {
+        East => glm::vec3(1, 0, 0),
+        West => glm::vec3(-1, 0, 0),
+        Up => glm::vec3(0, 1, 0),
+        Down => glm::vec3(0, -1, 0),
+        North => glm::vec3(0, 0, 1),
+        South => glm::vec3(0, 0, -1),
+    }
+}
+
+pub fn reverse_direction(dir: &Direction) -> Direction {
+    use Direction::*;
+    match dir {
+        East => West,
+        West => East,
+        Up => Down,
+        Down => Up,
+        North => South,
+        South => North,
     }
 }
 
@@ -57,9 +93,9 @@ mod tests {
 
     #[test]
     fn test_voxel_to_chunk_pos() {
-        let pos = Vec3::new(17.0, 0.0, 14.0);
+        let pos = glm::vec3(17.0, 0.0, 14.0);
         let chunk_pos = voxel_to_chunk_pos(&pos);
-        assert_eq!(chunk_pos, Vec3::new(1.0, 0.0, 0.0));
+        assert_eq!(chunk_pos, glm::vec3(1.0, 0.0, 0.0));
     }
 
     #[test]

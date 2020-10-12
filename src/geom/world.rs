@@ -27,8 +27,8 @@ impl WorldType for FlatWorldType {
             [opaque_voxel; VOXELS_IN_CHUNK].into()
         } else {
             let mut out = [transparent_voxel; VOXELS_IN_CHUNK];
-            for x in 0..crate::consts::CHUNK_SIZE {
-                for z in 0..crate::consts::CHUNK_SIZE {
+            for x in 0..crate::consts::CHUNK_SIZE_USIZE {
+                for z in 0..crate::consts::CHUNK_SIZE_USIZE {
                     let idx = super::util::calc_idx(x, 0, z);
                     out[idx] = opaque_voxel;
                 }
@@ -43,10 +43,11 @@ impl WorldType for FlatWorldType {
 
 #[derive(Clone, Debug)]
 pub struct World {
-    pub active: bool,
     pub world_type: u32,
     pub chunk_map: dashmap::DashMap<super::chunk::Position, legion::Entity>,
 }
+
+pub struct Active {}
 
 impl PartialEq for World {
     fn eq(&self, other: &Self) -> bool {
@@ -54,66 +55,52 @@ impl PartialEq for World {
     }
 }
 
-impl World {
-    pub fn add_chunk(&mut self, pos: super::chunk::Position, ent: legion::Entity) {
-        self.chunk_map.insert(pos, ent);
-    }
-
-    pub fn gen_chunk(
-        &mut self,
-        pos: super::chunk::Position,
-        cmd: &mut systems::CommandBuffer,
-        world_type_reg: &WorldTypeRegistry,
-        vox_reg: &crate::voxel_registry::VoxelReg,
-    ) -> legion::Entity {
-        let world_type = world_type_reg.world_type_reg.get(&self.world_type).unwrap();
-        let voxels = world_type.gen_chunk(&pos, &vox_reg);
-        let c = super::chunk::new_at_pos(cmd, pos, voxels);
-        self.add_chunk(pos, c);
-        c
-    }
-}
-
 pub fn generate_chunks_system(schedule_builder: &mut systems::Builder) {
-    use crate::consts::RENDER_RADIUS;
+    use super::chunk::*;
     schedule_builder.add_system(
         SystemBuilder::new("GenerateChunkSystem")
             .read_resource::<crate::voxel_registry::VoxelReg>()
-            .read_resource::<WorldTypeRegistry>()
-            .with_query(<(Entity, Write<World>)>::query())
+            .read_resource::<TypeRegistry>()
+            .with_query(<(Read<World>, Read<Active>)>::query())
+            .with_query(<(Entity, Read<Position>, Write<MarkedForGen>)>::query())
             .build(move |cmd, ecs, resources, queries| {
+                let (world_query, chunk_query) = queries;
                 let (voxreg, world_type_reg) = resources;
-                for (e, w) in queries.iter_mut(ecs) {
-                    if w.active {
-                        let world_type = world_type_reg.world_type_reg.get(&w.world_type).unwrap();
-
-                        for x in -RENDER_RADIUS..=RENDER_RADIUS {
-                            for y in -RENDER_RADIUS..=RENDER_RADIUS {
-                                for z in -RENDER_RADIUS..=RENDER_RADIUS {
-                                    let pos = super::chunk::Position { x, y, z };
-                                    if !w.chunk_map.contains_key(&pos) {
-                                        let voxels = world_type.gen_chunk(&pos, &voxreg);
-                                        let c = super::chunk::new_at_pos(cmd, pos, voxels);
-                                        w.chunk_map.insert(pos, c);
-                                        return;
-                                    }
+                let (mut world_ecs, mut chunk_ecs) = ecs.split_for_query(world_query);
+                world_query.iter(&mut world_ecs).for_each(|(w, _)| {
+                    let world_type = world_type_reg.world_type_reg.get(&w.world_type).unwrap();
+                    chunk_query
+                        .iter_mut(&mut chunk_ecs)
+                        .for_each(|(e, pos, _)| {
+                            let voxels = world_type.gen_chunk(&pos, &voxreg);
+                            super::chunk::new_at_pos(cmd, e.clone(), voxels);
+                            for n in super::util::ALL_DIRECTIONS.iter() {
+                                let norm = super::util::normals_i64(n);
+                                let mut n_pos = pos.clone();
+                                n_pos.x += norm.x;
+                                n_pos.y += norm.y;
+                                n_pos.z += norm.z;
+                                if w.chunk_map.contains_key(&n_pos) {
+                                    let entity_ref = w.chunk_map.get(&n_pos).unwrap();
+                                    let entity = entity_ref.value();
+                                    cmd.add_component(entity.clone(), UpdateRender {});
                                 }
                             }
-                        }
-                    }
-                }
+                            cmd.remove_component::<MarkedForGen>(e.clone());
+                        });
+                });
             }),
     );
 }
 
-pub struct WorldTypeRegistry {
+pub struct TypeRegistry {
     pub world_type_reg: HashMap<u32, Box<dyn WorldType>>,
     next_type_key: u32,
 }
 
-impl WorldTypeRegistry {
-    pub fn new() -> WorldTypeRegistry {
-        WorldTypeRegistry {
+impl TypeRegistry {
+    pub fn new() -> Self {
+        Self {
             world_type_reg: HashMap::new(),
             next_type_key: 1,
         }

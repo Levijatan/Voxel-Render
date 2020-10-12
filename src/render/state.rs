@@ -3,9 +3,7 @@ use super::model;
 use super::model::{DrawLight, DrawModel, Vertex};
 use super::texture;
 
-use winit::{dpi::PhysicalPosition, event::*, window::Window};
-
-use wgpu::util::DeviceExt;
+use winit::{dpi::PhysicalPosition, event::*};
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
@@ -127,9 +125,9 @@ pub struct State {
     swap_chain: wgpu::SwapChain,
     render_pipeline: wgpu::RenderPipeline,
     obj_model: model::Model,
-    camera: camera::Camera,
-    projection: camera::Projection,
-    camera_controller: camera::CameraController,
+    pub camera: camera::Camera,
+    pub projection: camera::Projection,
+    camera_controller: camera::Controller,
     light: Light,
     light_buffer: wgpu::Buffer,
     light_bind_group: wgpu::BindGroup,
@@ -147,7 +145,7 @@ pub struct State {
 }
 
 impl State {
-    pub async fn new(window: &Window) -> Self {
+    pub async fn new(window: &winit::window::Window) -> Self {
         let size = window.inner_size();
 
         // The instance is a handle to our GPU
@@ -224,11 +222,12 @@ impl State {
 
         let camera = camera::Camera::new(glm::vec3(0.0, 5.0, 10.0), -90.0, -20.0);
         let projection = camera::Projection::new(sc_desc.width, sc_desc.height, 45.0, 0.1, 100.0);
-        let camera_controller = camera::CameraController::new(4.0, 0.4);
+        let camera_controller = camera::Controller::new(4.0, 0.4);
 
         let mut uniforms = Uniforms::new();
         uniforms.update_view_proj(&camera, &projection);
 
+        use wgpu::util::DeviceExt as _;
         let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Uniform Buffer"),
             contents: bytemuck::cast_slice(&[uniforms]),
@@ -236,10 +235,9 @@ impl State {
         });
 
         let mut instance_buffer_size =
-            crate::consts::RENDER_RADIUS as u64 * 2 * crate::consts::CHUNK_SIZE as u64;
+            crate::consts::RENDER_RADIUS as u64 * 2 * crate::consts::CHUNK_SIZE_U64;
         instance_buffer_size = instance_buffer_size * instance_buffer_size * instance_buffer_size;
         instance_buffer_size *= std::mem::size_of::<InstanceRaw>() as u64;
-        println!("{}", instance_buffer_size);
 
         let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Instace Buffer"),
@@ -470,7 +468,6 @@ impl State {
     }
 
     pub fn set_instance_buffer(&mut self, instances: Vec<Instance>) {
-        println!("instances len {}", instances.len());
         let instance_data = instances.iter().map(Instance::to_raw).collect::<Vec<_>>();
         self.queue.write_buffer(
             &self.instance_buffer,

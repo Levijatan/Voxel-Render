@@ -1,8 +1,6 @@
 use anyhow::*;
 use rayon::prelude::*;
 use std::ops::Range;
-use std::path::Path;
-use wgpu::util::DeviceExt;
 
 use super::texture;
 
@@ -121,7 +119,7 @@ pub struct Model {
 }
 
 impl Model {
-    pub fn load<P: AsRef<Path>>(
+    pub fn load<P: AsRef<std::path::Path>>(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         layout: &wgpu::BindGroupLayout,
@@ -237,7 +235,7 @@ impl Model {
                     vertices[c[1] as usize].bitangent = bitangent;
                     vertices[c[2] as usize].bitangent = bitangent;
                 }
-
+                use wgpu::util::DeviceExt as _;
                 let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some(&format!("{:?} Vertex Buffer", m.name)),
                     contents: bytemuck::cast_slice(&vertices),

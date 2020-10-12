@@ -1,12 +1,5 @@
 use super::consts::opengl_to_wgpu_matrix;
 
-use std::f32::consts::FRAC_PI_2;
-use std::time::Duration;
-use winit::dpi::LogicalPosition;
-use winit::event::*;
-
-use flamer::flame;
-
 pub struct Frustum {
     sphere_factor_x: f32,
     sphere_factor_y: f32,
@@ -18,24 +11,20 @@ pub struct Frustum {
 
 #[derive(PartialEq)]
 pub enum FrustumPos {
-    INSIDE,
-    OUTSIDE,
-    INTERSECTS,
+    Inside,
+    Outside,
+    Intersects,
 }
 
 impl Frustum {
-    #[flame("Frustum")]
-    pub fn new(
-        fov: f32,
-        aspect_ratio: f32,
-        cam_pos: glm::Vec3,
-        cam_target: glm::Vec3,
-        cam_dir: glm::Vec3,
-    ) -> Frustum {
-        let angle = fov.to_radians();
+    pub fn new(p: &Projection, cam: &Camera) -> Frustum {
+        let cam_target =
+            cam.pos + glm::vec3(cam.yaw.cos(), cam.pitch.sin(), cam.yaw.sin()).normalize();
+        let cam_dir = glm::vec3(0.0, 1.0, 0.0);
+        let angle = p.fovy;
         let tang = angle.tan();
-        let anglex = (tang * aspect_ratio).atan();
-        let z = glm::normalize(&(cam_pos - cam_target));
+        let anglex = (tang * p.aspect).atan();
+        let z = glm::normalize(&(cam.pos - cam_target));
         let x = glm::normalize(&cam_dir.cross(&z));
         Frustum {
             tang,
@@ -47,99 +36,87 @@ impl Frustum {
         }
     }
 
-    #[flame("Frustum")]
-    pub fn update(&mut self, cam_pos: glm::Vec3, cam_target: glm::Vec3, cam_dir: glm::Vec3) {
-        self.z = glm::normalize(&(cam_pos - cam_target));
+    pub fn update(&mut self, cam: &Camera) {
+        let cam_target =
+            cam.pos + glm::vec3(cam.yaw.cos(), cam.pitch.sin(), cam.yaw.sin()).normalize();
+        let cam_dir = glm::vec3(0.0, 1.0, 0.0);
+        self.z = glm::normalize(&(cam.pos - cam_target));
         self.x = glm::normalize(&cam_dir.cross(&self.z));
         self.y = self.z.cross(&self.x);
     }
 
     #[allow(dead_code)]
-    #[flame("Frustum")]
-    pub fn point(
-        &self,
-        p: glm::Vec3,
-        cam_pos: glm::Vec3,
-        far_plane: f32,
-        near_plane: f32,
-        ratio: f32,
-    ) -> FrustumPos {
+    pub fn point(&self, p: &glm::Vec3, cam_pos: &glm::Vec3, proj: &Projection) -> FrustumPos {
         let v = p - cam_pos;
 
         let pcz = v.dot(&(-self.z));
-        if pcz > far_plane || pcz < near_plane {
-            return FrustumPos::OUTSIDE;
+        if pcz > proj.zfar || pcz < proj.znear {
+            return FrustumPos::Outside;
         }
 
         let pcy = v.dot(&self.y);
         let mut aux = pcz * self.tang;
         if pcy > aux || pcy < -aux {
-            return FrustumPos::OUTSIDE;
+            return FrustumPos::Outside;
         }
 
         let pcx = v.dot(&self.x);
-        aux *= ratio;
+        aux *= proj.aspect;
         if pcx > aux || pcx < -aux {
-            return FrustumPos::OUTSIDE;
+            return FrustumPos::Outside;
         }
 
-        FrustumPos::INSIDE
+        FrustumPos::Inside
     }
 
-    #[flame("Frustum")]
     pub fn sphere(
         &self,
-        center: glm::Vec3,
+        center: &glm::Vec3,
         radius: f32,
-        cam_pos: glm::Vec3,
-        far_plane: f32,
-        near_plane: f32,
-        ratio: f32,
+        cam_pos: &glm::Vec3,
+        proj: &Projection,
     ) -> FrustumPos {
         let v = center - cam_pos;
 
         let az = v.dot(&(-self.z));
-        if az > far_plane + radius || az < near_plane - radius {
-            return FrustumPos::OUTSIDE;
+        if az > proj.zfar + radius || az < proj.znear - radius {
+            return FrustumPos::Outside;
         }
 
         let ax = v.dot(&self.x);
-        let zz1 = az * self.tang * ratio;
+        let zz1 = az * self.tang * proj.aspect;
         let d1 = self.sphere_factor_x * radius;
         if ax > zz1 + d1 || az < -zz1 - d1 {
-            return FrustumPos::OUTSIDE;
+            return FrustumPos::Outside;
         }
 
         let ay = v.dot(&self.y);
         let zz2 = az * self.tang;
         let d2 = self.sphere_factor_y * radius;
         if ay > zz2 + d2 || ay < -zz2 - d2 {
-            return FrustumPos::OUTSIDE;
+            return FrustumPos::Outside;
         }
 
-        if az > far_plane - radius || az < near_plane + radius {
-            FrustumPos::INTERSECTS
+        if az > proj.zfar - radius || az < proj.znear + radius {
+            FrustumPos::Intersects
         } else if ay > zz2 - d2 || ay < -zz2 + d2 {
-            FrustumPos::INTERSECTS
+            FrustumPos::Intersects
         } else if ax > zz1 - d1 || ax < -zz1 + d1 {
-            FrustumPos::INTERSECTS
+            FrustumPos::Intersects
         } else {
-            FrustumPos::INSIDE
+            FrustumPos::Inside
         }
     }
 
-    #[flame("Frustum")]
     pub fn cube(
         &self,
-        center: glm::Vec3,
+        center: &glm::Vec3,
         size: f32,
-        cam_pos: glm::Vec3,
-        far_plane: f32,
-        near_plane: f32,
-        ratio: f32,
+        cam_pos: &glm::Vec3,
+        proj: &Projection,
     ) -> FrustumPos {
-        let sphere_radius = (size / 2.0) * 1.732051;
-        return self.sphere(center, sphere_radius, cam_pos, far_plane, near_plane, ratio);
+        let sphere_radius = (size / 2.0) * 1.732_051;
+        self.sphere(center, sphere_radius, cam_pos, proj)
     }
 }
 
@@ -151,11 +128,11 @@ pub struct Camera {
 
 impl Camera {
     pub fn new(pos: glm::Vec3, yaw: f32, pitch: f32) -> Camera {
-        return Camera {
+        Camera {
             pos,
             yaw: yaw.to_radians(),
             pitch: pitch.to_radians(),
-        };
+        }
     }
 
     pub fn calc_matrix(&self) -> glm::Mat4 {
@@ -193,7 +170,7 @@ impl Projection {
     }
 }
 
-pub struct CameraController {
+pub struct Controller {
     amount_left: f32,
     amount_right: f32,
     amount_forward: f32,
@@ -207,7 +184,7 @@ pub struct CameraController {
     sensitivity: f32,
 }
 
-impl CameraController {
+impl Controller {
     pub fn new(speed: f32, sensitivity: f32) -> Self {
         Self {
             amount_left: 0.0,
@@ -224,7 +201,14 @@ impl CameraController {
         }
     }
 
-    pub fn process_keyboard(&mut self, key: VirtualKeyCode, state: ElementState) -> bool {
+    pub fn process_keyboard(
+        &mut self,
+        key: winit::event::VirtualKeyCode,
+        state: winit::event::ElementState,
+    ) -> bool {
+        use winit::event::ElementState;
+        use winit::event::VirtualKeyCode;
+
         let amount = if state == ElementState::Pressed {
             1.0
         } else {
@@ -259,11 +243,14 @@ impl CameraController {
         }
     }
 
-    pub fn process_scroll(&mut self, delta: &MouseScrollDelta) {
+    pub fn process_scroll(&mut self, delta: &winit::event::MouseScrollDelta) {
         self.scroll = match delta {
             // I'm assuming a line is about 100 pixels
-            MouseScrollDelta::LineDelta(_, scroll) => scroll * 100.0,
-            MouseScrollDelta::PixelDelta(LogicalPosition { y: scroll, .. }) => *scroll as f32,
+            winit::event::MouseScrollDelta::LineDelta(_, scroll) => scroll * 100.0,
+            winit::event::MouseScrollDelta::PixelDelta(winit::dpi::LogicalPosition {
+                y: scroll,
+                ..
+            }) => *scroll as f32,
         };
     }
 
@@ -272,7 +259,9 @@ impl CameraController {
         self.rotate_vertical = mouse_dy as f32;
     }
 
-    pub fn update_camera(&mut self, camera: &mut Camera, dt: Duration) {
+    pub fn update_camera(&mut self, camera: &mut Camera, dt: std::time::Duration) {
+        use std::f32::consts::FRAC_PI_2;
+
         let dt = dt.as_secs_f32();
 
         let (yaw_sin, yaw_cos) = camera.yaw.sin_cos();
@@ -296,8 +285,10 @@ impl CameraController {
 
         if camera.pitch < -FRAC_PI_2 {
             camera.pitch = -FRAC_PI_2;
-        } else if camera.pitch > FRAC_PI_2 {
-            camera.pitch = FRAC_PI_2;
+        } else {
+            if camera.pitch > FRAC_PI_2 {
+                camera.pitch = FRAC_PI_2;
+            }
         }
     }
 }

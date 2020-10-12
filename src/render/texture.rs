@@ -1,6 +1,4 @@
 use anyhow::*;
-use image::GenericImageView;
-use std::path::Path;
 
 pub struct Texture {
     pub texture: wgpu::Texture,
@@ -11,7 +9,7 @@ pub struct Texture {
 impl Texture {
     pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
-    pub fn load<P: AsRef<Path>>(
+    pub fn load<P: AsRef<std::path::Path>>(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         path: P,
@@ -25,6 +23,7 @@ impl Texture {
         Self::from_image(device, queue, &img, label, is_normal_map)
     }
 
+    #[allow(dead_code)]
     pub fn from_bytes(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -44,6 +43,8 @@ impl Texture {
         is_normal_map: bool,
     ) -> Result<Self> {
         let rgba = img.to_rgba();
+
+        use image::GenericImageView as _;
         let dimensions = img.dimensions();
 
         let size = wgpu::Extent3d {
