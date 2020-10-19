@@ -1,4 +1,6 @@
-#[allow(dead_code)]
+use anyhow::{anyhow, ensure, Result};
+
+#[optick_attr::profile]
 pub fn voxel_to_chunk_pos(voxel_pos: &glm::Vec3) -> glm::Vec3 {
     let size = crate::consts::CHUNK_SIZE_F32;
     let x = (voxel_pos.x / size).floor();
@@ -7,32 +9,42 @@ pub fn voxel_to_chunk_pos(voxel_pos: &glm::Vec3) -> glm::Vec3 {
     glm::vec3(x, y, z)
 }
 
-pub fn calc_idx(x: usize, y: usize, z: usize) -> usize {
+#[optick_attr::profile]
+pub fn calc_idx(x: usize, y: usize, z: usize) -> Result<usize> {
     let size = crate::consts::CHUNK_SIZE_USIZE;
-    let out = (z * size * size) + (x * size) + y;
-    if out >= size * size * size {
-        panic!(
-            "Cannot use larger x:{}, y:{} ,z:{} than size:{}",
-            x, y, z, size
-        );
-    }
-    out
+    let out = (y * size * size) + (z * size) + x;
+    ensure!(
+        out < size * size * size,
+        "Cannot use larger x:{}, y:{}, z:{} than CHUNK_SIZE:{}",
+        x,
+        y,
+        z,
+        size
+    );
+    Ok(out)
 }
 
-pub fn calc_idx_pos(pos: &glm::Vec3) -> usize {
-    calc_idx(pos.x as usize, pos.y as usize, pos.z as usize)
+#[optick_attr::profile]
+pub fn calc_idx_pos(pos: &glm::Vec3) -> Result<usize> {
+    let x: usize = pos.x as usize;
+    let y: usize = pos.y as usize;
+    let z: usize = pos.z as usize;
+    let out = calc_idx(x, y, z)?;
+    Ok(out)
 }
 
+#[optick_attr::profile]
 pub fn idx_to_pos(idx: usize) -> glm::Vec3 {
     let size = crate::consts::CHUNK_SIZE_USIZE;
     let i = idx;
-    let y = i % size;
-    let x = (i % (size * size)) / size;
-    let z = i / (size * size);
+    let x = i % size;
+    let z = (i % (size * size)) / size;
+    let y = i / (size * size);
     glm::vec3(x as f32, y as f32, z as f32)
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[repr(usize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Direction {
     East,
     West,
@@ -51,6 +63,7 @@ pub const ALL_DIRECTIONS: [Direction; 6] = [
     Direction::South,
 ];
 
+#[optick_attr::profile]
 pub fn normals_f32(dir: &Direction) -> glm::Vec3 {
     use Direction::*;
     match dir {
@@ -63,7 +76,8 @@ pub fn normals_f32(dir: &Direction) -> glm::Vec3 {
     }
 }
 
-pub fn normals_i64(dir: &Direction) -> glm::TVec3<i64> {
+#[optick_attr::profile]
+pub fn normals_i32(dir: &Direction) -> glm::TVec3<i32> {
     use Direction::*;
     match dir {
         East => glm::vec3(1, 0, 0),
@@ -75,6 +89,7 @@ pub fn normals_i64(dir: &Direction) -> glm::TVec3<i64> {
     }
 }
 
+#[optick_attr::profile]
 pub fn reverse_direction(dir: &Direction) -> Direction {
     use Direction::*;
     match dir {
@@ -84,6 +99,18 @@ pub fn reverse_direction(dir: &Direction) -> Direction {
         Down => Up,
         North => South,
         South => North,
+    }
+}
+
+pub fn go_left(dir: &Direction) -> Result<Direction> {
+    use Direction::*;
+
+    match dir {
+        North => Ok(West),
+        West => Ok(South),
+        South => Ok(East),
+        East => Ok(North),
+        _ => Err(anyhow!("No left in 3 dimensions")),
     }
 }
 
@@ -99,17 +126,27 @@ mod tests {
     }
 
     #[test]
-    fn test_calc_idx() {
-        let idx = calc_idx(15, 1, 0);
+    fn test_calc_idx() -> Result<()> {
+        let idx = calc_idx(15, 1, 0)?;
         assert_eq!(idx, 241);
+        Ok(())
     }
 
     #[test]
-    fn test_idx_to_pos() {
-        let idx = calc_idx(15, 1, 0);
+    fn test_idx_to_pos() -> Result<()> {
+        let idx = calc_idx(15, 1, 0)?;
         let pos = idx_to_pos(idx);
         assert_eq!(pos.x, 15.0);
         assert_eq!(pos.y, 1.0);
         assert_eq!(pos.z, 0.0);
+        Ok(())
+    }
+
+    #[test]
+    fn test_normals_i32() {
+        let expected_pos = glm::vec3(1, 0, 0);
+        let mut pos = glm::vec3(0, 0, 0);
+        pos += normals_i32(&Direction::East);
+        assert_eq!(pos, expected_pos);
     }
 }

@@ -1,5 +1,6 @@
-use anyhow::*;
+use anyhow::{Context, Result};
 use rayon::prelude::*;
+use std::convert::TryInto;
 use std::ops::Range;
 
 use super::texture;
@@ -22,6 +23,7 @@ unsafe impl bytemuck::Zeroable for ModelVertex {}
 unsafe impl bytemuck::Pod for ModelVertex {}
 
 impl Vertex for ModelVertex {
+    #[optick_attr::profile]
     fn desc<'a>() -> wgpu::VertexBufferDescriptor<'a> {
         use std::mem;
         wgpu::VertexBufferDescriptor {
@@ -66,6 +68,7 @@ pub struct Material {
 }
 
 impl Material {
+    #[optick_attr::profile]
     pub fn new(
         device: &wgpu::Device,
         name: &str,
@@ -119,12 +122,15 @@ pub struct Model {
 }
 
 impl Model {
+    #[optick_attr::profile]
     pub fn load<P: AsRef<std::path::Path>>(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         layout: &wgpu::BindGroupLayout,
         path: P,
     ) -> Result<Self> {
+        use wgpu::util::DeviceExt as _;
+
         let (obj_models, obj_materials) = tobj::load_obj(path.as_ref(), true)?;
 
         // We're assuming that the texture files are stored with the obj file
@@ -195,9 +201,12 @@ impl Model {
                 // use the triangles, so we need to loop through the
                 // indices in chunks of 3
                 for c in indices.chunks(3) {
-                    let v0 = vertices[c[0] as usize];
-                    let v1 = vertices[c[1] as usize];
-                    let v2 = vertices[c[2] as usize];
+                    let c0: usize = c[0].try_into().unwrap();
+                    let c1: usize = c[1].try_into().unwrap();
+                    let c2: usize = c[2].try_into().unwrap();
+                    let v0 = vertices[c0];
+                    let v1 = vertices[c1];
+                    let v2 = vertices[c2];
 
                     let pos0 = v0.position;
                     let pos1 = v1.position;
@@ -227,15 +236,15 @@ impl Model {
                     let bitangent = (delta_pos2 * delta_uv1.x - delta_pos1 * delta_uv2.x) * r;
 
                     // We'll use the same tangent/bitangent for each vertex in the triangle
-                    vertices[c[0] as usize].tangent = tangent;
-                    vertices[c[1] as usize].tangent = tangent;
-                    vertices[c[2] as usize].tangent = tangent;
 
-                    vertices[c[0] as usize].bitangent = bitangent;
-                    vertices[c[1] as usize].bitangent = bitangent;
-                    vertices[c[2] as usize].bitangent = bitangent;
+                    vertices[c0].tangent = tangent;
+                    vertices[c1].tangent = tangent;
+                    vertices[c2].tangent = tangent;
+
+                    vertices[c0].bitangent = bitangent;
+                    vertices[c1].bitangent = bitangent;
+                    vertices[c2].bitangent = bitangent;
                 }
-                use wgpu::util::DeviceExt as _;
                 let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some(&format!("{:?} Vertex Buffer", m.name)),
                     contents: bytemuck::cast_slice(&vertices),
@@ -251,7 +260,7 @@ impl Model {
                     name: m.name.clone(),
                     vertex_buffer,
                     index_buffer,
-                    num_elements: m.mesh.indices.len() as u32,
+                    num_elements: m.mesh.indices.len().try_into().unwrap(),
                     material: m.mesh.material_id.unwrap_or(0),
                 })
             })
@@ -261,7 +270,7 @@ impl Model {
     }
 }
 
-pub trait DrawModel<'a, 'b>
+pub trait Draw<'a, 'b>
 where
     'b: 'a,
 {
@@ -304,10 +313,11 @@ where
     );
 }
 
-impl<'a, 'b> DrawModel<'a, 'b> for wgpu::RenderPass<'a>
+impl<'a, 'b> Draw<'a, 'b> for wgpu::RenderPass<'a>
 where
     'b: 'a,
 {
+    #[optick_attr::profile]
     fn draw_mesh(
         &mut self,
         mesh: &'b Mesh,
@@ -318,6 +328,7 @@ where
         self.draw_mesh_instanced(mesh, material, 0..1, uniforms, light);
     }
 
+    #[optick_attr::profile]
     fn draw_mesh_instanced(
         &mut self,
         mesh: &'b Mesh,
@@ -334,6 +345,7 @@ where
         self.draw_indexed(0..mesh.num_elements, 0, instances);
     }
 
+    #[optick_attr::profile]
     fn draw_model(
         &mut self,
         model: &'b Model,
@@ -343,6 +355,7 @@ where
         self.draw_model_instanced(model, 0..1, uniforms, light);
     }
 
+    #[optick_attr::profile]
     fn draw_model_instanced(
         &mut self,
         model: &'b Model,
@@ -356,6 +369,7 @@ where
         }
     }
 
+    #[optick_attr::profile]
     fn draw_model_instanced_with_material(
         &mut self,
         model: &'b Model,
@@ -366,91 +380,6 @@ where
     ) {
         for mesh in &model.meshes {
             self.draw_mesh_instanced(mesh, material, instances.clone(), uniforms, light);
-        }
-    }
-}
-
-pub trait DrawLight<'a, 'b>
-where
-    'b: 'a,
-{
-    fn draw_light_mesh(
-        &mut self,
-        mesh: &'b Mesh,
-        uniforms: &'b wgpu::BindGroup,
-        light: &'b wgpu::BindGroup,
-    );
-
-    fn draw_light_mesh_instaced(
-        &mut self,
-        mesh: &'b Mesh,
-        instances: Range<u32>,
-        uniforms: &'b wgpu::BindGroup,
-        light: &'b wgpu::BindGroup,
-    ) where
-        'b: 'a;
-
-    fn draw_light_model(
-        &mut self,
-        model: &'b Model,
-        uniforms: &'b wgpu::BindGroup,
-        light: &'b wgpu::BindGroup,
-    );
-
-    fn draw_light_model_instanced(
-        &mut self,
-        model: &'b Model,
-        instances: Range<u32>,
-        uniforms: &'b wgpu::BindGroup,
-        light: &'b wgpu::BindGroup,
-    );
-}
-
-impl<'a, 'b> DrawLight<'a, 'b> for wgpu::RenderPass<'a>
-where
-    'b: 'a,
-{
-    fn draw_light_mesh(
-        &mut self,
-        mesh: &'b Mesh,
-        uniforms: &'b wgpu::BindGroup,
-        light: &'b wgpu::BindGroup,
-    ) {
-        self.draw_light_mesh_instaced(mesh, 0..1, uniforms, light);
-    }
-
-    fn draw_light_mesh_instaced(
-        &mut self,
-        mesh: &'b Mesh,
-        instances: Range<u32>,
-        uniforms: &'b wgpu::BindGroup,
-        light: &'b wgpu::BindGroup,
-    ) {
-        self.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-        self.set_index_buffer(mesh.index_buffer.slice(..));
-        self.set_bind_group(0, uniforms, &[]);
-        self.set_bind_group(1, light, &[]);
-        self.draw_indexed(0..mesh.num_elements, 0, instances);
-    }
-
-    fn draw_light_model(
-        &mut self,
-        model: &'b Model,
-        uniforms: &'b wgpu::BindGroup,
-        light: &'b wgpu::BindGroup,
-    ) {
-        self.draw_light_model_instanced(model, 0..1, uniforms, light);
-    }
-
-    fn draw_light_model_instanced(
-        &mut self,
-        model: &'b Model,
-        instances: Range<u32>,
-        uniforms: &'b wgpu::BindGroup,
-        light: &'b wgpu::BindGroup,
-    ) {
-        for mesh in &model.meshes {
-            self.draw_light_mesh_instaced(mesh, instances.clone(), uniforms, light);
         }
     }
 }

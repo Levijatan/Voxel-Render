@@ -1,4 +1,9 @@
-use legion::*;
+use super::chunk;
+use super::util;
+use super::world;
+
+use anyhow::Result;
+use legion::{maybe_changed, systems, Entity, IntoQuery, Read, SystemBuilder, Write};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Ticket {
@@ -8,49 +13,43 @@ pub struct Ticket {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct PropagateTicket {
-    pub poison: Option<super::util::Direction>,
-    pub ticket: Ticket,
+pub struct PropagateComponent {
+    dir: Option<util::Direction>,
+    ticket: Ticket,
+    branch: bool,
 }
 
 //TODO: add player position
 pub fn add_ticket_system(schedule_builder: &mut systems::Builder) {
-    use super::chunk::MarkedForGen;
-    use super::chunk::Position;
-    use crate::consts::RENDER_RADIUS;
-
     schedule_builder.add_system(
         SystemBuilder::new("AddPlayerTicketSystem")
-            .with_query(<(
-                Entity,
-                Write<super::world::World>,
-                Read<super::world::Active>,
-            )>::query())
+            .with_query(<(Entity, Write<world::World>, Read<world::Active>)>::query())
             .read_resource::<crate::Clock>()
             .build(move |cmd, ecs, clock, world_query| {
+                optick::event!();
                 if clock.cur_tick % 400 == 0 || clock.cur_tick == 1 {
                     world_query.iter_mut(ecs).for_each(|(entity, world, _)| {
-                        let pos = Position {
-                            x: 0,
-                            y: 0,
-                            z: 0,
+                        let pos = chunk::Position {
+                            pos: glm::vec3(0, 0, 0),
                             world_id: entity.clone(),
                         };
                         let chunk_entity: Entity;
                         if let Some(chunk_entry) = world.chunk_map.get(&pos) {
-                            chunk_entity = chunk_entry.value().clone();
+                            chunk_entity = chunk_entry.clone();
                         } else {
-                            chunk_entity = cmd.push((pos, MarkedForGen {}));
+                            let chunk = chunk::new(pos.clone());
+                            chunk_entity = cmd.push(chunk);
                             world.chunk_map.insert(pos, chunk_entity);
                         }
                         let ticket = Ticket {
                             start_time: clock.cur_tick,
                             ttl: 400,
-                            priority: RENDER_RADIUS,
+                            priority: crate::consts::RENDER_RADIUS,
                         };
-                        let prop_ticket = PropagateTicket {
-                            poison: None,
+                        let prop_ticket = PropagateComponent {
+                            dir: None,
                             ticket: ticket.clone(),
+                            branch: false,
                         };
                         cmd.add_component(chunk_entity, ticket);
                         cmd.add_component(chunk_entity, prop_ticket);
@@ -66,6 +65,7 @@ pub fn update_tickets_system(schedule_builder: &mut systems::Builder) {
             .with_query(<(Entity, Write<Ticket>)>::query())
             .read_resource::<crate::Clock>()
             .build(move |cmd, ecs, clock, ticket_query| {
+                optick::event!();
                 ticket_query.iter_mut(ecs).for_each(|(entity, ticket)| {
                     if ticket.start_time + ticket.ttl <= clock.cur_tick {
                         cmd.remove_component::<Ticket>(*entity);
@@ -76,82 +76,112 @@ pub fn update_tickets_system(schedule_builder: &mut systems::Builder) {
 }
 
 pub fn propagate_tickets_system(schedule_builder: &mut systems::Builder) {
-    use super::chunk::Position;
-    use super::util::reverse_direction;
-    use super::util::ALL_DIRECTIONS;
-    use super::world::World;
+    use util::Direction::*;
 
     schedule_builder.add_system(
-        SystemBuilder::new("PropagateTickets")
-            .with_query(<(Entity, Read<Position>, Write<PropagateTicket>)>::query())
-            .with_query(<Write<World>>::query())
-            .build(move |cmd, ecs, _, (ticket_query, _)| {
-                let (mut ticket_ecs, mut world_ecs) = ecs.split_for_query(ticket_query);
-                ticket_query
-                    .iter_mut(&mut ticket_ecs)
-                    .for_each(|(entity, pos, prop_ticket)| {
-                        let mut world_ref = world_ecs.entry_mut(pos.world_id).unwrap();
-                        let mut world = world_ref.get_component_mut::<World>().unwrap();
-                        if prop_ticket.ticket.priority > 0 {
-                            if let Some(skip) = prop_ticket.poison.clone() {
-                                ALL_DIRECTIONS.iter().for_each(|dir| {
-                                    if *dir != skip {
-                                        propagate_ticket(
-                                            dir,
-                                            pos.clone(),
-                                            prop_ticket.clone(),
-                                            &mut world,
-                                            cmd,
-                                        )
+        SystemBuilder::new("PropagateComponents")
+            .with_query(<(Write<world::World>, Read<world::Active>)>::query())
+            .with_query(
+                <(Entity, Read<chunk::Position>, Write<PropagateComponent>)>::query()
+                    .filter(maybe_changed::<PropagateComponent>()),
+            )
+            .build(move |cmd, ecs, _, (world_query, ticket_query)| {
+                optick::event!();
+                let (mut world_ecs, mut ticket_ecs) = ecs.split_for_query(world_query);
+                world_query.iter_mut(&mut world_ecs).for_each(|(world, _)| {
+                    ticket_query.iter_mut(&mut ticket_ecs).for_each(
+                        |(entity, pos, prop_ticket)| {
+                            if prop_ticket.ticket.priority > 0 {
+                                match prop_ticket.dir {
+                                    Some(Up) => {
+                                        propagate_up_or_down(prop_ticket, pos, cmd, world, true)
                                     }
-                                });
-                            } else {
-                                ALL_DIRECTIONS.iter().for_each(|dir| {
-                                    let mut dir_prop_ticket = prop_ticket.clone();
-                                    dir_prop_ticket.poison = Some(reverse_direction(dir));
-                                    propagate_ticket(
-                                        dir,
-                                        pos.clone(),
-                                        dir_prop_ticket,
-                                        &mut world,
-                                        cmd,
-                                    )
-                                })
+                                    Some(Down) => {
+                                        propagate_up_or_down(prop_ticket, pos, cmd, world, false)
+                                    }
+                                    Some(_) => propagate_rest(prop_ticket, pos, cmd, world),
+                                    None => propagate_start(prop_ticket, pos, cmd, world),
+                                };
                             }
-                        }
-                        cmd.remove_component::<PropagateTicket>(entity.clone());
-                    });
+                            cmd.remove_component::<PropagateComponent>(entity.clone());
+                        },
+                    );
+                });
             }),
     );
 }
 
-fn propagate_ticket(
-    dir: &super::util::Direction,
-    pos: super::chunk::Position,
-    prop_ticket: PropagateTicket,
-    world: &mut super::world::World,
+fn propagate_rest(
+    prop_ticket: &PropagateComponent,
+    pos: &chunk::Position,
     cmd: &mut systems::CommandBuffer,
+    world: &mut world::World,
 ) {
-    use super::chunk::MarkedForGen;
-    use super::util::normals_i64;
+    let dir = prop_ticket.dir.clone().unwrap();
+    propagate_ticket(&dir, pos, prop_ticket.clone(), world, cmd).unwrap();
+    if !prop_ticket.branch {
+        let mut branch = prop_ticket.clone();
+        branch.branch = false;
+        let p_dir = prop_ticket.dir.clone().unwrap();
+        let dir = util::go_left(&p_dir).unwrap();
+        propagate_ticket(&dir, pos, branch, world, cmd).unwrap();
+    }
+}
 
-    let norm = normals_i64(dir);
-    let mut dir_pos = pos;
-    dir_pos.x += norm.x;
-    dir_pos.y += norm.y;
-    dir_pos.z += norm.z;
+fn propagate_up_or_down(
+    prop_ticket: &PropagateComponent,
+    pos: &chunk::Position,
+    cmd: &mut systems::CommandBuffer,
+    world: &mut world::World,
+    up: bool,
+) {
+    let skip: util::Direction;
+    if up {
+        skip = util::Direction::Down;
+    } else {
+        skip = util::Direction::Up;
+    }
+    for dir in util::ALL_DIRECTIONS.iter() {
+        if *dir != skip {
+            propagate_ticket(dir, pos, prop_ticket.clone(), world, cmd).unwrap();
+        }
+    }
+}
+
+fn propagate_start(
+    prop_ticket: &PropagateComponent,
+    pos: &chunk::Position,
+    cmd: &mut systems::CommandBuffer,
+    world: &mut world::World,
+) {
+    for dir in util::ALL_DIRECTIONS.iter() {
+        propagate_ticket(dir, pos, prop_ticket.clone(), world, cmd).unwrap();
+    }
+}
+
+#[optick_attr::profile]
+fn propagate_ticket(
+    dir: &util::Direction,
+    pos: &chunk::Position,
+    prop_ticket: PropagateComponent,
+    world: &mut world::World,
+    cmd: &mut systems::CommandBuffer,
+) -> Result<()> {
+    let dir_pos = pos.neighbor(&dir)?;
     let dir_entity: Entity;
     if let Some(dir_entity_entry) = world.chunk_map.get(&dir_pos) {
-        dir_entity = dir_entity_entry.value().clone();
+        dir_entity = dir_entity_entry.clone();
     } else {
-        dir_entity = cmd.push((dir_pos, MarkedForGen {}));
+        let chunk = chunk::new(dir_pos);
+        dir_entity = cmd.push(chunk);
         world.chunk_map.insert(dir_pos, dir_entity);
     }
-
-    let mut dir_prop_ticket = prop_ticket;
-    dir_prop_ticket.ticket.priority -= 1;
-    dir_prop_ticket.ticket.start_time += 1;
-    let dir_ticket = dir_prop_ticket.ticket.clone();
-    cmd.add_component(dir_entity, dir_prop_ticket);
+    let mut prop_ticket = prop_ticket;
+    prop_ticket.dir = Some(dir.clone());
+    prop_ticket.ticket.priority -= 1;
+    prop_ticket.ticket.start_time += 1;
+    let dir_ticket = prop_ticket.ticket.clone();
+    cmd.add_component(dir_entity, prop_ticket);
     cmd.add_component(dir_entity, dir_ticket);
+    Ok(())
 }

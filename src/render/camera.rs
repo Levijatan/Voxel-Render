@@ -36,6 +36,7 @@ impl Frustum {
         }
     }
 
+    #[optick_attr::profile]
     pub fn update(&mut self, cam: &Camera) {
         let cam_target =
             cam.pos + glm::vec3(cam.yaw.cos(), cam.pitch.sin(), cam.yaw.sin()).normalize();
@@ -45,7 +46,7 @@ impl Frustum {
         self.y = self.z.cross(&self.x);
     }
 
-    #[allow(dead_code)]
+    #[optick_attr::profile]
     pub fn point(&self, p: &glm::Vec3, cam_pos: &glm::Vec3, proj: &Projection) -> FrustumPos {
         let v = p - cam_pos;
 
@@ -69,6 +70,7 @@ impl Frustum {
         FrustumPos::Inside
     }
 
+    #[optick_attr::profile]
     pub fn sphere(
         &self,
         center: &glm::Vec3,
@@ -108,6 +110,7 @@ impl Frustum {
         }
     }
 
+    #[optick_attr::profile]
     pub fn cube(
         &self,
         center: &glm::Vec3,
@@ -135,6 +138,7 @@ impl Camera {
         }
     }
 
+    #[optick_attr::profile]
     pub fn calc_matrix(&self) -> glm::Mat4 {
         glm::look_at(
             &self.pos,
@@ -152,19 +156,21 @@ pub struct Projection {
 }
 
 impl Projection {
-    pub fn new(width: u32, height: u32, fovy: f32, znear: f32, zfar: f32) -> Self {
+    pub fn new(width: f32, height: f32, fovy: f32, znear: f32, zfar: f32) -> Self {
         Self {
-            aspect: width as f32 / height as f32,
+            aspect: width / height,
             fovy: fovy.to_radians(),
             znear,
             zfar,
         }
     }
 
+    #[optick_attr::profile]
     pub fn resize(&mut self, width: u32, height: u32) {
         self.aspect = width as f32 / height as f32;
     }
 
+    #[optick_attr::profile]
     pub fn calc_matrix(&self) -> glm::Mat4 {
         opengl_to_wgpu_matrix() * glm::perspective(self.aspect, self.fovy, self.znear, self.zfar)
     }
@@ -201,6 +207,7 @@ impl Controller {
         }
     }
 
+    #[optick_attr::profile]
     pub fn process_keyboard(
         &mut self,
         key: winit::event::VirtualKeyCode,
@@ -243,6 +250,7 @@ impl Controller {
         }
     }
 
+    #[optick_attr::profile]
     pub fn process_scroll(&mut self, delta: &winit::event::MouseScrollDelta) {
         self.scroll = match delta {
             // I'm assuming a line is about 100 pixels
@@ -254,11 +262,13 @@ impl Controller {
         };
     }
 
+    #[optick_attr::profile]
     pub fn process_mouse(&mut self, mouse_dx: f64, mouse_dy: f64) {
         self.rotate_horizontal = mouse_dx as f32;
         self.rotate_vertical = mouse_dy as f32;
     }
 
+    #[optick_attr::profile]
     pub fn update_camera(&mut self, camera: &mut Camera, dt: std::time::Duration) {
         use std::f32::consts::FRAC_PI_2;
 
@@ -285,10 +295,9 @@ impl Controller {
 
         if camera.pitch < -FRAC_PI_2 {
             camera.pitch = -FRAC_PI_2;
+        } else if camera.pitch > FRAC_PI_2 {
+            camera.pitch = FRAC_PI_2;
         } else {
-            if camera.pitch > FRAC_PI_2 {
-                camera.pitch = FRAC_PI_2;
-            }
         }
     }
 }

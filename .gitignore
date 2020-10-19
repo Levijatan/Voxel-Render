@@ -1,4 +1,6 @@
 /target
 *.exe
 *.lock
+*.opt
+*.log
 flamegraph.html

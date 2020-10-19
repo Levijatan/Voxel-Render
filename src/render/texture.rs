@@ -1,4 +1,4 @@
-use anyhow::*;
+use anyhow::Result;
 
 pub struct Texture {
     pub texture: wgpu::Texture,
@@ -9,6 +9,7 @@ pub struct Texture {
 impl Texture {
     pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
+    #[optick_attr::profile]
     pub fn load<P: AsRef<std::path::Path>>(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -23,6 +24,7 @@ impl Texture {
         Self::from_image(device, queue, &img, label, is_normal_map)
     }
 
+    #[optick_attr::profile]
     #[allow(dead_code)]
     pub fn from_bytes(
         device: &wgpu::Device,
@@ -35,6 +37,7 @@ impl Texture {
         Self::from_image(device, queue, &img, Some(label), is_normal_map)
     }
 
+    #[optick_attr::profile]
     pub fn from_image(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -42,9 +45,8 @@ impl Texture {
         label: Option<&str>,
         is_normal_map: bool,
     ) -> Result<Self> {
-        let rgba = img.to_rgba();
-
         use image::GenericImageView as _;
+        let rgba = img.to_rgba();
         let dimensions = img.dimensions();
 
         let size = wgpu::Extent3d {
@@ -103,6 +105,7 @@ impl Texture {
         })
     }
 
+    #[optick_attr::profile]
     pub fn create_depth_texture(
         device: &wgpu::Device,
         sc_desc: &wgpu::SwapChainDescriptor,
