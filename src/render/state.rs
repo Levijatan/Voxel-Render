@@ -5,6 +5,7 @@ use super::texture;
 use super::uniforms;
 use anyhow::Result;
 use std::convert::TryInto;
+use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Instance {
@@ -45,7 +46,7 @@ pub fn create_render_pipeline(
 
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("Render Pipeline"),
-        layout: Some(&layout),
+        layout: Some(layout),
         vertex_stage: wgpu::ProgrammableStageDescriptor {
             module: &vs_module,
             entry_point: "main",
@@ -90,9 +91,8 @@ pub struct State {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub sc_desc: wgpu::SwapChainDescriptor,
-    pub swap_chain: wgpu::SwapChain,
+    pub swap_chain: Arc<Mutex<wgpu::SwapChain>>,
     pub camera: camera::Camera,
-    pub projection: camera::Projection,
     pub light_state: light::State,
     pub uniforms_state: uniforms::State,
     pub chunk_state: chunk::State,
@@ -136,19 +136,18 @@ impl State {
             present_mode: wgpu::PresentMode::Fifo,
         };
 
-        let swap_chain = device.create_swap_chain(&surface, &sc_desc);
+        let swap_chain = Arc::new(Mutex::new(device.create_swap_chain(&surface, &sc_desc)));
 
-        let camera = camera::Camera::new(glm::vec3(0.0, 5.0, 10.0), -90.0, -20.0);
-        let projection = camera::Projection::new(
-            sc_desc.width as f32,
-            sc_desc.height as f32,
-            45.0,
-            0.1,
-            100.0,
+        let projection = camera::Projection::new(sc_desc.width as f32, sc_desc.height as f32, 45.0, 0.1, 1000.0);
+
+        let camera = camera::Camera::new(
+            glm::vec3(0.0, 5.0, 10.0),
+            -90.0,
+            -20.0,
+            projection,
         );
 
-        let (uniforms_state, uniform_bind_group_layout) =
-            uniforms::State::new(&camera, &projection, &device);
+        let (uniforms_state, uniform_bind_group_layout) = uniforms::State::new(&camera, &device);
 
         let (light_state, light_bind_group_layout) =
             light::State::new(&device, &sc_desc, &uniform_bind_group_layout);
@@ -171,7 +170,6 @@ impl State {
             sc_desc,
             swap_chain,
             camera,
-            projection,
             light_state,
             chunk_state,
             uniforms_state,
@@ -185,19 +183,20 @@ impl State {
         self.size = new_size;
         self.sc_desc.width = new_size.width;
         self.sc_desc.height = new_size.height;
-        self.projection.resize(new_size.width, new_size.height);
+        self.camera
+            .projection
+            .resize(new_size.width, new_size.height);
         self.depth_texture = super::texture::Texture::create_depth_texture(
             &self.device,
             &self.sc_desc,
             "depth_texure",
         );
-        self.swap_chain = self.device.create_swap_chain(&self.surface, &self.sc_desc);
+        self.swap_chain = Arc::new(Mutex::new(self.device.create_swap_chain(&self.surface, &self.sc_desc)));
     }
 
     #[optick_attr::profile]
     pub fn update(&mut self, dt: std::time::Duration) {
-        self.uniforms_state
-            .update(&self.camera, &self.projection, &mut self.queue);
+        self.uniforms_state.update(&self.camera, &mut self.queue);
         self.light_state.update(&mut self.queue, &dt);
     }
 
@@ -210,7 +209,7 @@ impl State {
     }
 
     #[optick_attr::profile]
-    pub fn set_instance_buffer(&mut self, instances: &Vec<Instance>, offset: u64) {
+    pub fn set_instance_buffer(&self, instances: &[Instance], offset: u64) {
         let instance_data = instances.iter().map(Instance::to_raw).collect::<Vec<_>>();
         let raw_instance_size: u64 = std::mem::size_of::<super::state::InstanceRaw>()
             .try_into()
@@ -221,5 +220,10 @@ impl State {
             rl_offset,
             bytemuck::cast_slice(&instance_data),
         );
+    }
+
+    pub fn get_current_frame_output(&self) -> wgpu::SwapChainTexture{
+        let mut swap_chain = self.swap_chain.lock().unwrap();
+        swap_chain.get_current_frame().expect("Timeout getting texture").output
     }
 }

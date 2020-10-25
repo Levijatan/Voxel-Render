@@ -17,16 +17,15 @@ pub enum FrustumPos {
 }
 
 impl Frustum {
-    pub fn new(p: &Projection, cam: &Camera) -> Frustum {
-        let cam_target =
-            cam.pos + glm::vec3(cam.yaw.cos(), cam.pitch.sin(), cam.yaw.sin()).normalize();
+    fn new(p: &Projection, pos: glm::Vec3, yaw: f32, pitch: f32) -> Self {
+        let cam_target = pos + glm::vec3(yaw.cos(), pitch.sin(), yaw.sin()).normalize();
         let cam_dir = glm::vec3(0.0, 1.0, 0.0);
         let angle = p.fovy;
         let tang = angle.tan();
         let anglex = (tang * p.aspect).atan();
-        let z = glm::normalize(&(cam.pos - cam_target));
+        let z = glm::normalize(&(pos - cam_target));
         let x = glm::normalize(&cam_dir.cross(&z));
-        Frustum {
+        Self {
             tang,
             sphere_factor_y: 1.0 / angle.cos(),
             sphere_factor_x: 1.0 / anglex.cos(),
@@ -37,11 +36,10 @@ impl Frustum {
     }
 
     #[optick_attr::profile]
-    pub fn update(&mut self, cam: &Camera) {
-        let cam_target =
-            cam.pos + glm::vec3(cam.yaw.cos(), cam.pitch.sin(), cam.yaw.sin()).normalize();
+    fn update(&mut self, pos: glm::Vec3, yaw: f32, pitch: f32) {
+        let cam_target = pos + glm::vec3(yaw.cos(), pitch.sin(), yaw.sin()).normalize();
         let cam_dir = glm::vec3(0.0, 1.0, 0.0);
-        self.z = glm::normalize(&(cam.pos - cam_target));
+        self.z = glm::normalize(&(pos - cam_target));
         self.x = glm::normalize(&cam_dir.cross(&self.z));
         self.y = self.z.cross(&self.x);
     }
@@ -99,11 +97,7 @@ impl Frustum {
             return FrustumPos::Outside;
         }
 
-        if az > proj.zfar - radius || az < proj.znear + radius {
-            FrustumPos::Intersects
-        } else if ay > zz2 - d2 || ay < -zz2 + d2 {
-            FrustumPos::Intersects
-        } else if ax > zz1 - d1 || ax < -zz1 + d1 {
+        if az > proj.zfar - radius || az < proj.znear + radius || ay > zz2 - d2 || ay < -zz2 + d2 || ax > zz1 - d1 || ax < -zz1 + d1 {
             FrustumPos::Intersects
         } else {
             FrustumPos::Inside
@@ -127,24 +121,47 @@ pub struct Camera {
     pub pos: glm::Vec3,
     yaw: f32,
     pitch: f32,
+    pub projection: Projection,
+    frustum: Frustum,
 }
 
 impl Camera {
-    pub fn new(pos: glm::Vec3, yaw: f32, pitch: f32) -> Camera {
-        Camera {
+    pub fn new(
+        pos: glm::Vec3,
+        yaw: f32,
+        pitch: f32,
+        projection: Projection,
+    ) -> Self {
+        let yaw = yaw.to_radians();
+        let pitch = pitch.to_radians();
+
+        let frustum = Frustum::new(&projection, pos, yaw, pitch);
+
+        Self {
             pos,
-            yaw: yaw.to_radians(),
-            pitch: pitch.to_radians(),
+            yaw,
+            pitch,
+            frustum,
+            projection,
         }
     }
 
-    #[optick_attr::profile]
     pub fn calc_matrix(&self) -> glm::Mat4 {
         glm::look_at(
             &self.pos,
             &(self.pos + glm::vec3(self.yaw.cos(), self.pitch.sin(), self.yaw.sin()).normalize()),
             &glm::vec3(0.0, 1.0, 0.0),
         )
+    }
+
+    pub fn calc_view_projection_matrix(&self) -> glm::Mat4 {
+        self.projection.calc_matrix() * self.calc_matrix()
+    }
+
+    pub fn cube_in_view(&self, pos: &glm::Vec3, half_length: f32) -> bool {
+        self.frustum
+            .cube(pos, half_length, &self.pos, &self.projection)
+            != FrustumPos::Outside
     }
 }
 
@@ -191,7 +208,7 @@ pub struct Controller {
 }
 
 impl Controller {
-    pub fn new(speed: f32, sensitivity: f32) -> Self {
+    pub const fn new(speed: f32, sensitivity: f32) -> Self {
         Self {
             amount_left: 0.0,
             amount_right: 0.0,
@@ -255,7 +272,7 @@ impl Controller {
         self.scroll = match delta {
             // I'm assuming a line is about 100 pixels
             winit::event::MouseScrollDelta::LineDelta(_, scroll) => scroll * 100.0,
-            winit::event::MouseScrollDelta::PixelDelta(winit::dpi::LogicalPosition {
+            winit::event::MouseScrollDelta::PixelDelta(winit::dpi::PhysicalPosition {
                 y: scroll,
                 ..
             }) => *scroll as f32,
@@ -299,5 +316,7 @@ impl Controller {
             camera.pitch = FRAC_PI_2;
         } else {
         }
+
+        camera.frustum.update(camera.pos, camera.yaw, camera.pitch);
     }
 }

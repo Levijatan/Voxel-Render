@@ -43,8 +43,7 @@ pub fn idx_to_pos(idx: usize) -> glm::Vec3 {
     glm::vec3(x as f32, y as f32, z as f32)
 }
 
-#[repr(usize)]
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Direction {
     East,
     West,
@@ -52,6 +51,34 @@ pub enum Direction {
     Down,
     North,
     South,
+}
+
+impl From<Direction> for usize {
+    fn from(value: Direction) -> Self {
+        use Direction::{East, West, Up, Down, North, South};
+        match value {
+            East => 0,
+            West => 1,
+            Up => 2,
+            Down => 3,
+            North => 4,
+            South => 5,
+        }
+    }
+}
+
+impl From<Direction> for u8 {
+    fn from(value: Direction) -> Self {
+        use Direction::{East, West, Up, Down, North, South};
+        match value {
+            East => 0b0000_0001,
+            West => 0b0000_0010,
+            Up => 0b0000_0100,
+            Down => 0b0000_1000,
+            North => 0b0001_0000,
+            South => 0b0010_0000,
+        }
+    }
 }
 
 pub const ALL_DIRECTIONS: [Direction; 6] = [
@@ -64,8 +91,8 @@ pub const ALL_DIRECTIONS: [Direction; 6] = [
 ];
 
 #[optick_attr::profile]
-pub fn normals_f32(dir: &Direction) -> glm::Vec3 {
-    use Direction::*;
+pub fn normals_f32(dir: Direction) -> glm::Vec3 {
+    use Direction::{East, West, Up, Down, North, South};
     match dir {
         East => glm::vec3(1.0, 0.0, 0.0),
         West => glm::vec3(-1.0, 0.0, 0.0),
@@ -77,8 +104,8 @@ pub fn normals_f32(dir: &Direction) -> glm::Vec3 {
 }
 
 #[optick_attr::profile]
-pub fn normals_i32(dir: &Direction) -> glm::TVec3<i32> {
-    use Direction::*;
+pub fn normals_i32(dir: Direction) -> glm::TVec3<i32> {
+    use Direction::{East, West, Up, Down, North, South};
     match dir {
         East => glm::vec3(1, 0, 0),
         West => glm::vec3(-1, 0, 0),
@@ -90,8 +117,8 @@ pub fn normals_i32(dir: &Direction) -> glm::TVec3<i32> {
 }
 
 #[optick_attr::profile]
-pub fn reverse_direction(dir: &Direction) -> Direction {
-    use Direction::*;
+pub fn reverse_direction(dir: Direction) -> Direction {
+    use Direction::{East, West, Up, Down, North, South};
     match dir {
         East => West,
         West => East,
@@ -102,8 +129,8 @@ pub fn reverse_direction(dir: &Direction) -> Direction {
     }
 }
 
-pub fn go_left(dir: &Direction) -> Result<Direction> {
-    use Direction::*;
+pub fn go_left(dir: Direction) -> Result<Direction> {
+    use Direction::{East, West, North, South};
 
     match dir {
         North => Ok(West),
@@ -127,7 +154,7 @@ mod tests {
 
     #[test]
     fn test_calc_idx() -> Result<()> {
-        let idx = calc_idx(15, 1, 0)?;
+        let idx = calc_idx(1, 0, 15)?;
         assert_eq!(idx, 241);
         Ok(())
     }
@@ -136,9 +163,9 @@ mod tests {
     fn test_idx_to_pos() -> Result<()> {
         let idx = calc_idx(15, 1, 0)?;
         let pos = idx_to_pos(idx);
-        assert_eq!(pos.x, 15.0);
-        assert_eq!(pos.y, 1.0);
-        assert_eq!(pos.z, 0.0);
+        assert!((pos.x - 15.0).abs() < f32::EPSILON);
+        assert!((pos.y - 1.0).abs() < f32::EPSILON);
+        assert!(pos.z == 0.0);
         Ok(())
     }
 
@@ -146,7 +173,7 @@ mod tests {
     fn test_normals_i32() {
         let expected_pos = glm::vec3(1, 0, 0);
         let mut pos = glm::vec3(0, 0, 0);
-        pos += normals_i32(&Direction::East);
+        pos += normals_i32(Direction::East);
         assert_eq!(pos, expected_pos);
     }
 }

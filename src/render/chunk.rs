@@ -2,13 +2,13 @@ use super::model;
 use super::texture;
 use crate::consts::CHUNK_SIZE_U32;
 use crate::consts::RENDER_RADIUS;
-use crate::geom::chunk;
-use crate::geom::ticket;
+use crate::geom::{chunk, world};
 use anyhow::{ensure, Result};
-use legion::{component, maybe_changed, systems, Entity, IntoQuery, Read, SystemBuilder, Write};
+use legion::{component, systems, Entity, IntoQuery, Read, Write, SystemBuilder};
 use model::Vertex;
 use std::convert::TryInto;
 use std::ops::Range;
+use std::sync::{Arc, Mutex};
 
 #[optick_attr::profile]
 fn render_area_u32() -> u32 {
@@ -36,14 +36,15 @@ fn buffer_offset_u64() -> Result<u64> {
     Ok(offset)
 }
 
+#[derive(Debug, Clone)]
 pub struct Renderer {
-    free_offsets: Vec<u32>,
+    free_offsets: Arc<Mutex<Vec<u32>>>,
     buffer_offset_multiplier: u32,
 }
 
 impl Renderer {
     pub fn new() -> Self {
-        let free_offsets: Vec<u32> = (0..render_area_u32()).collect();
+        let free_offsets = Arc::new(Mutex::new((0..render_area_u32()).collect()));
         let buffer_offset_multiplier = buffer_offset_u32();
 
         Self {
@@ -53,25 +54,27 @@ impl Renderer {
     }
 
     #[optick_attr::profile]
-    pub fn fetch_offset(&mut self) -> Option<u32> {
-        let offset = self.free_offsets.pop()?;
+    pub fn fetch_offset(&self) -> Option<u32> {
+        let mut data = self.free_offsets.lock().unwrap();
+        let offset = data.pop()?;
         Some(offset * self.buffer_offset_multiplier)
     }
 
     #[optick_attr::profile]
-    pub fn return_offset(&mut self, off: u32) -> Result<()> {
+    pub fn return_offset(&self, off: u32) -> Result<()> {
         let offset = off / self.buffer_offset_multiplier;
+        let mut data = self.free_offsets.lock().unwrap();
         ensure!(
-            !self.free_offsets.contains(&offset),
+            !data.contains(&offset),
             "There cannot exist more than one of an offset"
         );
-        self.free_offsets.push(offset);
+        data.push(offset);
         Ok(())
     }
 }
 
 pub struct Component {
-    start_tick: u64,
+    last_tick_with_ticket: u64,
     ttl: u64,
     pub offset: u32,
     pub amount: u32,
@@ -81,38 +84,43 @@ pub fn add_system(schedule_builder: &mut systems::Builder) {
     schedule_builder.add_system(
         SystemBuilder::new("AddChunkRenderComponent")
             .with_query(
-                <(
-                    Entity,
-                    Read<chunk::Visible>,
-                    Read<chunk::Data>,
-                    Read<ticket::Ticket>,
-                )>::query()
-                .filter(
-                    !component::<Component>()
-                        & !component::<chunk::MarkedForGen>()
-                        & !component::<chunk::UpdateRender>()
-                        & maybe_changed::<chunk::Data>(),
-                ),
+                <(Entity, Read<chunk::Position>, Read<chunk::Data>)>::query()
+                    .filter(!component::<Component>()),
             )
-            .write_resource::<Renderer>()
-            .read_resource::<crate::Clock>()
-            .write_resource::<super::state::State>()
-            .build(move |cmd, ecs, (renderer, clock, state), chunk_query| {
-                optick::event!();
-                chunk_query.iter_mut(ecs).for_each(|(entity, _, data, _)| {
-                    if let Some(offset) = renderer.fetch_offset() {
-                        let component = Component {
-                            start_tick: clock.cur_tick,
-                            ttl: 400,
-                            offset,
-                            amount: data.render.len() as u32,
-                        };
+            .with_query(
+                <(Entity, Read<world::World>)>::query().filter(component::<world::Active>()),
+            )
+            .read_resource::<Renderer>()
+            .read_resource::<crate::clock::Clock>()
+            .read_resource::<super::state::State>()
+            .build(
+                move |cmd, ecs, (renderer, clock, state), (chunk_query, world_query)| {
+                    let (world_ecs, mut chunk_ecs) = ecs.split_for_query(world_query);
+                    world_query.for_each(&world_ecs, |(world_id, world)| {
+                        chunk_query
+                            .for_each_mut(&mut chunk_ecs, |(entity, pos, data)| {
+                                if &pos.world_id == world_id
+                                    && world.chunk_has_ticket(pos)
+                                    && data.ready_for_render()
+                                    && world.chunk_visibility(pos)
+                                {
+                                    if let Some(offset) = renderer.fetch_offset() {
+                                        let render = data.gen_render_instances(pos);
+                                        let component = Component {
+                                            last_tick_with_ticket: clock.cur_tick(),
+                                            ttl: 400,
+                                            offset,
+                                            amount: render.len() as u32,
+                                        };
 
-                        state.set_instance_buffer(&data.render, offset as u64);
-                        cmd.add_component(entity.clone(), component);
-                    }
-                })
-            }),
+                                        state.set_instance_buffer(&render, offset as u64);
+                                        cmd.add_component(*entity, component);
+                                    }
+                                }
+                            })
+                    });
+                },
+            ),
     );
 }
 
@@ -120,18 +128,28 @@ pub fn remove_system(schedule_builder: &mut systems::Builder) {
     schedule_builder.add_system(
         SystemBuilder::new("RemoveChunkRenderSystem")
             .with_query(
-                <(Entity, Write<Component>)>::query().filter(!component::<ticket::Ticket>()),
+                <(Entity, Read<chunk::Position>, Write<Component>)>::query(),
             )
+            .with_query( <(Entity, Read<world::World>)>::query().filter(component::<world::Active>()))
             .write_resource::<Renderer>()
-            .read_resource::<crate::Clock>()
-            .build(move |cmd, ecs, (renderer, clock), chunk_query| {
+            .read_resource::<crate::clock::Clock>()
+            .build(move |cmd, ecs, (renderer, clock), (chunk_query, world_query)| {
                 optick::event!();
-                chunk_query.iter_mut(ecs).for_each(|(entity, component)| {
-                    if component.start_tick + component.ttl <= clock.cur_tick {
-                        renderer.return_offset(component.offset).unwrap();
-                        cmd.remove_component::<Component>(entity.clone());
-                    }
-                })
+                let (world_ecs, mut chunk_ecs) = ecs.split_for_query(world_query);
+                world_query.for_each(&world_ecs, |(world_id, world)| {
+                    chunk_query.for_each_mut(&mut chunk_ecs, |(entity, pos, component)| {
+                        if &pos.world_id == world_id {
+                            if !world.chunk_has_ticket(pos) {
+                                if clock.cur_tick() + component.last_tick_with_ticket >= component.ttl {
+                                    renderer.return_offset(component.offset).unwrap();
+                                    cmd.remove_component::<Component>(*entity);
+                                }
+                            } else {
+                                component.last_tick_with_ticket = clock.cur_tick();
+                            }
+                        }
+                    });
+                });
             }),
     );
 }
@@ -229,15 +247,15 @@ impl State {
                 label: Some("Render Pipeline Layout"),
                 bind_group_layouts: &[
                     &texture_bind_group_layout,
-                    &uniform_bind_group_layout,
+                    uniform_bind_group_layout,
                     &bind_group_layout,
-                    &light_bind_group_layout,
+                    light_bind_group_layout,
                 ],
                 push_constant_ranges: &[],
             });
 
         let render_pipeline = super::state::create_render_pipeline(
-            &device,
+            device,
             &render_pipeline_layout,
             sc_desc.format,
             Some(texture::Texture::DEPTH_FORMAT),
@@ -248,8 +266,8 @@ impl State {
 
         let res_dir = std::path::Path::new(env!("OUT_DIR")).join("res");
         let voxel_model = model::Model::load(
-            &device,
-            &queue,
+            device,
+            queue,
             &texture_bind_group_layout,
             res_dir.join("cube.obj"),
         )?;
@@ -356,9 +374,9 @@ where
         self.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
         self.set_index_buffer(mesh.index_buffer.slice(..));
         self.set_bind_group(0, &material.bind_group, &[]);
-        self.set_bind_group(1, &uniforms, &[]);
-        self.set_bind_group(2, &chunk, &[offset]);
-        self.set_bind_group(3, &light, &[]);
+        self.set_bind_group(1, uniforms, &[]);
+        self.set_bind_group(2, chunk, &[offset]);
+        self.set_bind_group(3, light, &[]);
         self.draw_indexed(0..mesh.num_elements, 0, instances);
     }
 

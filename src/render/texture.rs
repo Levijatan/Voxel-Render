@@ -95,7 +95,7 @@ impl Texture {
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Nearest,
             mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
+            ..wgpu::SamplerDescriptor::default()
         });
 
         Ok(Self {
@@ -138,7 +138,7 @@ impl Texture {
             compare: Some(wgpu::CompareFunction::LessEqual),
             lod_min_clamp: -100.0,
             lod_max_clamp: 100.0,
-            ..Default::default()
+            ..wgpu::SamplerDescriptor::default()
         });
 
         Self {

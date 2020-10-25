@@ -15,9 +15,9 @@ impl Uniforms {
         }
     }
 
-    pub fn update_view_proj(&mut self, camera: &camera::Camera, projection: &camera::Projection) {
+    pub fn update_view_proj(&mut self, camera: &camera::Camera) {
         self.view_position = camera.pos.to_homogeneous();
-        self.view_proj = projection.calc_matrix() * camera.calc_matrix();
+        self.view_proj = camera.calc_view_projection_matrix();
     }
 }
 
@@ -31,14 +31,10 @@ pub struct State {
 }
 
 impl State {
-    pub fn new(
-        cam: &camera::Camera,
-        proj: &camera::Projection,
-        device: &wgpu::Device,
-    ) -> (Self, wgpu::BindGroupLayout) {
+    pub fn new(cam: &camera::Camera, device: &wgpu::Device) -> (Self, wgpu::BindGroupLayout) {
         use wgpu::util::DeviceExt as _;
         let mut uniforms = Uniforms::new();
-        uniforms.update_view_proj(cam, proj);
+        uniforms.update_view_proj(cam);
 
         let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Uniform Buffer"),
@@ -78,13 +74,8 @@ impl State {
         )
     }
 
-    pub fn update(
-        &mut self,
-        cam: &camera::Camera,
-        proj: &camera::Projection,
-        queue: &mut wgpu::Queue,
-    ) {
-        self.uniforms.update_view_proj(cam, proj);
+    pub fn update(&mut self, cam: &camera::Camera, queue: &mut wgpu::Queue) {
+        self.uniforms.update_view_proj(cam);
         queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(&[self.uniforms]));
     }
 }

@@ -1,5 +1,5 @@
 use crate::render::camera;
-use winit::{dpi::PhysicalPosition, event::*};
+use winit::{dpi::PhysicalPosition, event::{ElementState, KeyboardInput, MouseButton, WindowEvent}};
 
 pub struct State {
     mouse_pressed: bool,

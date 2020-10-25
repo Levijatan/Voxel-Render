@@ -1,6 +1,9 @@
 /target
+/.vscode
 *.exe
 *.lock
 *.opt
+*.log
+*.cap
 *.log
 flamegraph.html

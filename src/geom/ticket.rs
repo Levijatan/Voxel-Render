@@ -2,186 +2,127 @@ use super::chunk;
 use super::util;
 use super::world;
 
-use anyhow::Result;
-use legion::{maybe_changed, systems, Entity, IntoQuery, Read, SystemBuilder, Write};
+use anyhow::{Result, Error};
+use thiserror::Error;
+use legion::Entity;
 
-#[derive(Clone, Debug, PartialEq)]
+
+
+#[derive(Error, Debug)]
+pub enum TicketError {
+    #[error("Out of life")]
+    OutsideTTL,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Ticket {
     pub start_time: u64,
     pub ttl: u64,
-    pub priority: u32,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct PropagateComponent {
-    dir: Option<util::Direction>,
-    ticket: Ticket,
-    branch: bool,
+    pub pos: chunk::Position,
 }
 
 //TODO: add player position
-pub fn add_ticket_system(schedule_builder: &mut systems::Builder) {
-    schedule_builder.add_system(
-        SystemBuilder::new("AddPlayerTicketSystem")
-            .with_query(<(Entity, Write<world::World>, Read<world::Active>)>::query())
-            .read_resource::<crate::Clock>()
-            .build(move |cmd, ecs, clock, world_query| {
-                optick::event!();
-                if clock.cur_tick % 400 == 0 || clock.cur_tick == 1 {
-                    world_query.iter_mut(ecs).for_each(|(entity, world, _)| {
-                        let pos = chunk::Position {
-                            pos: glm::vec3(0, 0, 0),
-                            world_id: entity.clone(),
-                        };
-                        let chunk_entity: Entity;
-                        if let Some(chunk_entry) = world.chunk_map.get(&pos) {
-                            chunk_entity = chunk_entry.clone();
-                        } else {
-                            let chunk = chunk::new(pos.clone());
-                            chunk_entity = cmd.push(chunk);
-                            world.chunk_map.insert(pos, chunk_entity);
-                        }
-                        let ticket = Ticket {
-                            start_time: clock.cur_tick,
-                            ttl: 400,
-                            priority: crate::consts::RENDER_RADIUS,
-                        };
-                        let prop_ticket = PropagateComponent {
-                            dir: None,
-                            ticket: ticket.clone(),
-                            branch: false,
-                        };
-                        cmd.add_component(chunk_entity, ticket);
-                        cmd.add_component(chunk_entity, prop_ticket);
-                    })
-                }
-            }),
-    );
+pub fn add_ticket(
+    world_id: Entity,
+    world: &mut world::World,
+    clock: &crate::clock::Clock,
+    cmd: &mut legion::systems::CommandBuffer,
+) {
+    if clock.cur_tick() % 20 == 0 || clock.cur_tick() == 9 {
+        let pos = chunk::Position {
+            pos: glm::vec3(0, 0, 0),
+            world_id,
+        };
+
+        let ticket = Ticket {
+            start_time: clock.cur_tick(),
+            ttl: 40,
+            pos,
+        };
+
+        world.chunk_add_ticket(ticket, &pos, cmd);
+    }
 }
 
-pub fn update_tickets_system(schedule_builder: &mut systems::Builder) {
-    schedule_builder.add_system(
-        SystemBuilder::new("UpdateTickets")
-            .with_query(<(Entity, Write<Ticket>)>::query())
-            .read_resource::<crate::Clock>()
-            .build(move |cmd, ecs, clock, ticket_query| {
-                optick::event!();
-                ticket_query.iter_mut(ecs).for_each(|(entity, ticket)| {
-                    if ticket.start_time + ticket.ttl <= clock.cur_tick {
-                        cmd.remove_component::<Ticket>(*entity);
-                    }
-                });
-            }),
-    );
+pub fn update(ticket: &Ticket, cur_tick: u64) -> Result<()> {
+    if ticket.start_time + ticket.ttl <= cur_tick {
+        Err(Error::new(TicketError::OutsideTTL))
+    } else {
+        Ok(())
+    }
 }
 
-pub fn propagate_tickets_system(schedule_builder: &mut systems::Builder) {
-    use util::Direction::*;
+//direction to propagate (None for all), pos to move from, how many steps left of prop, is a prop branch, ticket index
+pub type PropagateTicket = (Option<util::Direction>, chunk::Position, u32, bool, generational_arena::Index);
 
-    schedule_builder.add_system(
-        SystemBuilder::new("PropagateComponents")
-            .with_query(<(Write<world::World>, Read<world::Active>)>::query())
-            .with_query(
-                <(Entity, Read<chunk::Position>, Write<PropagateComponent>)>::query()
-                    .filter(maybe_changed::<PropagateComponent>()),
-            )
-            .build(move |cmd, ecs, _, (world_query, ticket_query)| {
-                optick::event!();
-                let (mut world_ecs, mut ticket_ecs) = ecs.split_for_query(world_query);
-                world_query.iter_mut(&mut world_ecs).for_each(|(world, _)| {
-                    ticket_query.iter_mut(&mut ticket_ecs).for_each(
-                        |(entity, pos, prop_ticket)| {
-                            if prop_ticket.ticket.priority > 0 {
-                                match prop_ticket.dir {
-                                    Some(Up) => {
-                                        propagate_up_or_down(prop_ticket, pos, cmd, world, true)
-                                    }
-                                    Some(Down) => {
-                                        propagate_up_or_down(prop_ticket, pos, cmd, world, false)
-                                    }
-                                    Some(_) => propagate_rest(prop_ticket, pos, cmd, world),
-                                    None => propagate_start(prop_ticket, pos, cmd, world),
-                                };
-                            }
-                            cmd.remove_component::<PropagateComponent>(entity.clone());
-                        },
-                    );
-                });
-            }),
-    );
+//the vec is the new commands for the ticket queue.
+type PropagateReturn = Option<Vec<PropagateTicket>>;
+
+pub fn propagate(
+    prop: PropagateTicket,
+) -> Result<PropagateReturn> {
+    use util::Direction::{Down, Up};
+
+    Ok(match prop {
+        (_, _, 0, _, _) => None,
+        (Some(Down), pos, priority, _, idx) => Some(propagate_up_or_down(pos, priority, idx, false)?),
+        (Some(Up), pos, priority, _, idx) => Some(propagate_up_or_down(pos, priority, idx, true)?),
+        (Some(dir), pos, priority, branch, idx) => Some(propagate_rest(pos, priority, idx, branch, dir)?),
+        (None, pos, priority, _, idx) => Some(propagate_start(pos, priority, idx)?),
+    })
 }
 
 fn propagate_rest(
-    prop_ticket: &PropagateComponent,
-    pos: &chunk::Position,
-    cmd: &mut systems::CommandBuffer,
-    world: &mut world::World,
-) {
-    let dir = prop_ticket.dir.clone().unwrap();
-    propagate_ticket(&dir, pos, prop_ticket.clone(), world, cmd).unwrap();
-    if !prop_ticket.branch {
-        let mut branch = prop_ticket.clone();
-        branch.branch = false;
-        let p_dir = prop_ticket.dir.clone().unwrap();
-        let dir = util::go_left(&p_dir).unwrap();
-        propagate_ticket(&dir, pos, branch, world, cmd).unwrap();
+    pos: chunk::Position,
+    priority: u32,
+    idx: generational_arena::Index,
+    branch: bool,
+    dir: util::Direction,
+) -> Result<Vec<PropagateTicket>> {
+    let mut out = Vec::new();
+    out.push(propagate_ticket(dir, pos, priority, branch, idx)?);
+    if !branch {
+        let b_dir = util::go_left(dir)?;
+        out.push(propagate_ticket(b_dir, pos, priority, true, idx)?);
     }
+    Ok(out)
 }
 
 fn propagate_up_or_down(
-    prop_ticket: &PropagateComponent,
-    pos: &chunk::Position,
-    cmd: &mut systems::CommandBuffer,
-    world: &mut world::World,
+    pos: chunk::Position,
+    priority: u32,
+    idx: generational_arena::Index,
     up: bool,
-) {
-    let skip: util::Direction;
-    if up {
-        skip = util::Direction::Down;
+) -> Result<Vec<PropagateTicket>> {
+    let skip = if up {
+        util::Direction::Down
     } else {
-        skip = util::Direction::Up;
-    }
-    for dir in util::ALL_DIRECTIONS.iter() {
-        if *dir != skip {
-            propagate_ticket(dir, pos, prop_ticket.clone(), world, cmd).unwrap();
-        }
-    }
+        util::Direction::Up
+    };
+    Ok(util::ALL_DIRECTIONS.iter().filter(|&dir| *dir != skip).map(|dir| {
+        propagate_ticket(*dir, pos, priority, false, idx)
+    }).filter_map(Result::ok).collect::<Vec<_>>())
 }
 
 fn propagate_start(
-    prop_ticket: &PropagateComponent,
-    pos: &chunk::Position,
-    cmd: &mut systems::CommandBuffer,
-    world: &mut world::World,
-) {
-    for dir in util::ALL_DIRECTIONS.iter() {
-        propagate_ticket(dir, pos, prop_ticket.clone(), world, cmd).unwrap();
-    }
+    pos: chunk::Position,
+    priority: u32,
+    idx: generational_arena::Index,
+) -> Result<Vec<PropagateTicket>> {
+    Ok(util::ALL_DIRECTIONS.iter().map(|dir| {
+        propagate_ticket(*dir, pos, priority, false, idx)
+    }).filter_map(Result::ok).collect::<Vec<_>>())
 }
 
 #[optick_attr::profile]
 fn propagate_ticket(
-    dir: &util::Direction,
-    pos: &chunk::Position,
-    prop_ticket: PropagateComponent,
-    world: &mut world::World,
-    cmd: &mut systems::CommandBuffer,
-) -> Result<()> {
-    let dir_pos = pos.neighbor(&dir)?;
-    let dir_entity: Entity;
-    if let Some(dir_entity_entry) = world.chunk_map.get(&dir_pos) {
-        dir_entity = dir_entity_entry.clone();
-    } else {
-        let chunk = chunk::new(dir_pos);
-        dir_entity = cmd.push(chunk);
-        world.chunk_map.insert(dir_pos, dir_entity);
-    }
-    let mut prop_ticket = prop_ticket;
-    prop_ticket.dir = Some(dir.clone());
-    prop_ticket.ticket.priority -= 1;
-    prop_ticket.ticket.start_time += 1;
-    let dir_ticket = prop_ticket.ticket.clone();
-    cmd.add_component(dir_entity, prop_ticket);
-    cmd.add_component(dir_entity, dir_ticket);
-    Ok(())
+    dir: util::Direction,
+    pos: chunk::Position,
+    mut priority: u32,
+    branch: bool,
+    idx: generational_arena::Index,
+) -> Result<PropagateTicket> {
+    let dir_pos = pos.neighbor(dir)?;
+    priority -= 1;
+    Ok((Some(dir), dir_pos, priority, branch, idx))
 }

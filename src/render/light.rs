@@ -74,7 +74,7 @@ impl State {
             });
 
             state::create_render_pipeline(
-                &device,
+                device,
                 &layout,
                 sc_desc.format,
                 Some(texture::Texture::DEPTH_FORMAT),

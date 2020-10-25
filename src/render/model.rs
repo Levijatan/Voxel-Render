@@ -27,7 +27,7 @@ impl Vertex for ModelVertex {
     fn desc<'a>() -> wgpu::VertexBufferDescriptor<'a> {
         use std::mem;
         wgpu::VertexBufferDescriptor {
-            stride: mem::size_of::<ModelVertex>() as wgpu::BufferAddress,
+            stride: mem::size_of::<Self>() as wgpu::BufferAddress,
             step_mode: wgpu::InputStepMode::Vertex,
             attributes: &[
                 wgpu::VertexAttributeDescriptor {
@@ -340,8 +340,8 @@ where
         self.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
         self.set_index_buffer(mesh.index_buffer.slice(..));
         self.set_bind_group(0, &material.bind_group, &[]);
-        self.set_bind_group(1, &uniforms, &[]);
-        self.set_bind_group(2, &light, &[]);
+        self.set_bind_group(1, uniforms, &[]);
+        self.set_bind_group(2, light, &[]);
         self.draw_indexed(0..mesh.num_elements, 0, instances);
     }
 
