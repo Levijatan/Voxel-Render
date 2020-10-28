@@ -1,10 +1,10 @@
 use log::info;
-use std::time::{Duration, Instant};
+use std::{time::{Duration, Instant}, sync::{Arc, RwLock}};
 
 use super::consts;
 
 pub struct Clock {
-    last_tick: u64,
+    last_tick: Arc<RwLock<u64>>,
     cur_tick: u64,
     last_tick_when: Instant,
     last_render: Instant,
@@ -14,7 +14,7 @@ pub struct Clock {
 impl Clock {
     pub fn new() -> Self {
         Self {
-            last_tick: 0,
+            last_tick: Arc::new(RwLock::new(0)),
             cur_tick: 0,
             last_tick_when: Instant::now(),
             last_render: Instant::now(),
@@ -43,15 +43,17 @@ impl Clock {
         self.cur_tick
     }
 
-    pub const fn last_tick(&self) -> u64 {
-        self.last_tick
+    pub fn last_tick(&self) -> u64 {
+        *self.last_tick.read().unwrap()
     }
 
     pub const fn delta(&self) -> std::time::Duration {
         self.delta
     }
 
-    pub fn tick_done(&mut self) {
-        self.last_tick += 1;
+    pub fn tick_done(&self) {
+        if let Ok(mut last_tick) = self.last_tick.write() {
+            *last_tick += 1;
+        }
     }
 }

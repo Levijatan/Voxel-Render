@@ -5,8 +5,36 @@ use super::world;
 use anyhow::{Result, Error};
 use thiserror::Error;
 use legion::Entity;
+use std::{collections::VecDeque, sync::RwLock};
+use log::info;
 
+pub type TicketArena = generational_arena::Arena<Ticket>;
 
+pub struct TicketQueue {
+    queue: RwLock<VecDeque<PropagateTicket>>,
+}
+
+impl TicketQueue {
+    pub fn new() -> Self {
+        Self{queue: RwLock::new(VecDeque::new())}
+    }
+
+    pub fn pop(&self) -> Option<PropagateTicket> {
+        let mut queue = self.queue.write().unwrap();
+        queue.pop_front()
+    }
+
+    pub fn push(&self, value: PropagateTicket) {
+        let mut queue = self.queue.write().unwrap();
+        queue.push_back(value);
+    }
+}
+
+//direction to propagate (None for all), pos to move from, how many steps left of prop, is a prop branch, ticket index
+pub type PropagateTicket = (Option<util::Direction>, chunk::Position, u32, bool, generational_arena::Index);
+
+//the vec is the new commands for the ticket queue.
+type PropagateReturn = Option<Vec<PropagateTicket>>;
 
 #[derive(Error, Debug)]
 pub enum TicketError {
@@ -24,14 +52,16 @@ pub struct Ticket {
 //TODO: add player position
 pub fn add_ticket(
     world_id: Entity,
-    world: &mut world::World,
+    world: &world::Map,
     clock: &crate::clock::Clock,
     cmd: &mut legion::systems::CommandBuffer,
+    arena: &mut TicketArena,
+    queue: &TicketQueue,
 ) {
-    if clock.cur_tick() % 20 == 0 || clock.cur_tick() == 9 {
+    info!("***Adding Player Ticket***");
+    if clock.cur_tick() % 20 == 0 || clock.cur_tick() == 1 {
         let pos = chunk::Position {
             pos: glm::vec3(0, 0, 0),
-            world_id,
         };
 
         let ticket = Ticket {
@@ -40,7 +70,9 @@ pub fn add_ticket(
             pos,
         };
 
-        world.chunk_add_ticket(ticket, &pos, cmd);
+        info!("Adding {:#?} at {:#?}", ticket, pos);
+
+        world.chunk_add_ticket(ticket, world_id, &pos, cmd, arena, queue);
     }
 }
 
@@ -51,12 +83,6 @@ pub fn update(ticket: &Ticket, cur_tick: u64) -> Result<()> {
         Ok(())
     }
 }
-
-//direction to propagate (None for all), pos to move from, how many steps left of prop, is a prop branch, ticket index
-pub type PropagateTicket = (Option<util::Direction>, chunk::Position, u32, bool, generational_arena::Index);
-
-//the vec is the new commands for the ticket queue.
-type PropagateReturn = Option<Vec<PropagateTicket>>;
 
 pub fn propagate(
     prop: PropagateTicket,

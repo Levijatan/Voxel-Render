@@ -8,26 +8,28 @@ use bitvec::prelude::*;
 use dashmap::DashMap;
 use log::info;
 use std::cmp::Ordering;
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 
-#[derive(Debug)]
-pub struct World {
-    pub world_type: u32,
-    chunk_map: DashMap<chunk::Position, ChunkMeta>,
-    ticket_arena: generational_arena::Arena<ticket::Ticket>,
-    ticket_queue: VecDeque<ticket::PropagateTicket>,
+pub type TypeId = u32;
+pub type Id = legion::Entity;
+
+pub fn new_world(world_type: TypeId) -> (TypeId, Map, ticket::TicketArena, ticket::TicketQueue) {
+    (
+        world_type,
+        Map::new(),
+        ticket::TicketArena::new(),
+        ticket::TicketQueue::new(),
+    )
 }
 
-impl World {
-    pub fn new(world_type: u32) -> Self {
-        Self {
-            world_type,
-            chunk_map: DashMap::new(),
-            ticket_arena: generational_arena::Arena::new(),
-            ticket_queue: VecDeque::new(),
-        }
-    }
+pub struct Map {
+    chunk_map: DashMap<chunk::Position, ChunkMeta>,
+}
 
+impl Map {
+    pub fn new() -> Self {
+        Self{ chunk_map: DashMap::new() }
+    }
     pub fn chunk_is_transparent(
         &self,
         pos: &chunk::Position,
@@ -56,36 +58,39 @@ impl World {
     }
 
     pub fn chunk_add_ticket(
-        &mut self,
+        &self,
         value: ticket::Ticket,
+        id: Id,
         pos: &chunk::Position,
         cmd: &mut legion::systems::CommandBuffer,
+        arena: &mut ticket::TicketArena,
+        queue: &ticket::TicketQueue,
     ) {
         let mut prop = None;
         if let Some(mut meta) = self.chunk_map.get_mut(pos) {
             if let Some(ticket_id) = meta.ticket {
-                if let Some(ticket) = self.ticket_arena.get_mut(ticket_id) {
+                if let Some(ticket) = arena.get_mut(ticket_id) {
                     if ticket.pos == *pos {
                         *ticket = value;
                     } else {
-                        let idx = self.ticket_arena.insert(value);
+                        let idx = arena.insert(value);
                         meta.ticket = Some(idx);
                         prop = Some((None, *pos, crate::consts::RENDER_RADIUS, false, idx));
                     }
                 } else {
-                    let idx = self.ticket_arena.insert(value);
+                    let idx = arena.insert(value);
                     meta.ticket = Some(idx);
                     prop = Some((None, *pos, crate::consts::RENDER_RADIUS, false, idx));
                 }
             } else {
-                let idx = self.ticket_arena.insert(value);
+                let idx = arena.insert(value);
                 meta.ticket = Some(idx);
                 prop = Some((None, *pos, crate::consts::RENDER_RADIUS, false, idx));
             }
         } else {
-            let idx = self.ticket_arena.insert(value);
+            let idx = arena.insert(value);
             prop = Some((None, *pos, crate::consts::RENDER_RADIUS, false, idx));
-            let chunk = chunk::new(*pos);
+            let chunk = chunk::new(id, *pos);
             let entity = cmd.push(chunk);
             let mut meta = ChunkMeta::new(entity);
             meta.ticket = Some(idx);
@@ -93,12 +98,13 @@ impl World {
         }
 
         if let Some(p) = prop {
-            self.add_to_ticket_queue(p);
+            queue.push(p);
         }
     }
 
     pub fn chunk_set_ticket_idx(
         &self,
+        id: Id,
         pos: &chunk::Position,
         idx: generational_arena::Index,
         cmd: &mut legion::systems::CommandBuffer,
@@ -106,7 +112,7 @@ impl World {
         if let Some(mut meta) = self.chunk_map.get_mut(pos) {
             meta.ticket = Some(idx);
         } else {
-            let chunk = chunk::new(*pos);
+            let chunk = chunk::new(id, *pos);
             let entity = cmd.push(chunk);
             let mut meta = ChunkMeta::new(entity);
             meta.ticket = Some(idx);
@@ -114,16 +120,16 @@ impl World {
         }
     }
 
-    pub fn chunk_has_ticket(&self, pos: &chunk::Position) -> bool {
+    pub fn chunk_has_ticket(&self, pos: &chunk::Position, arena: &ticket::TicketArena) -> bool {
         if let Some(meta) = self.chunk_map.get(pos) {
-            meta.ticket.is_some()
+            if let Some(ticket_id) = meta.ticket {
+                arena.contains(ticket_id)
+            } else {
+                false
+            }
         } else {
             false
         }
-    }
-
-    pub fn add_to_ticket_queue(&mut self, val: ticket::PropagateTicket) {
-        self.ticket_queue.push_back(val);
     }
 }
 
@@ -165,38 +171,65 @@ impl ChunkMeta {
     }
 }
 
-impl PartialEq for World {
-    fn eq(&self, other: &Self) -> bool {
-        self.world_type == other.world_type
-    }
+use legion::{component, Entity, IntoQuery, Read, Write};
+
+pub fn ticket_queue(schedule_builder: &mut legion::systems::Builder) {
+    schedule_builder.add_system(
+        legion::SystemBuilder::new("WorldTicketQueue")
+            .with_query(
+                <(Entity, Read<Map>, Read<ticket::TicketQueue>)>::query().filter(component::<Active>()),
+            )
+            .build(|cmd, ecs, _, world_query| {
+                world_query.for_each_mut(ecs, |(id, map, queue)| {
+                    if let Some(prop) = queue.pop() {
+                        let (_, pos, _, _, idx) = prop;
+                        map.chunk_set_ticket_idx(*id, &pos, idx, cmd);
+                        if let Ok(Some(mut new_prop)) = ticket::propagate(prop) {
+                            new_prop.drain(..).for_each(|prop| queue.push(prop));
+                        }
+                    }
+                })
+            }),
+    );
 }
 
-use legion::{component, Entity, IntoQuery, Write};
+pub fn add_player_ticket_system(schedule_builder: &mut legion::systems::Builder) {
+    schedule_builder.add_system(
+        legion::SystemBuilder::new("WorldUpdateSystem")
+            .with_query(
+                <(
+                    Entity,
+                    Read<Map>,
+                    Write<ticket::TicketArena>,
+                    Read<ticket::TicketQueue>,
+                )>::query()
+                .filter(component::<Active>()),
+            )
+            .read_resource::<crate::clock::Clock>()
+            .build(|cmd, ecs, clock, world_query| {
+                if clock.cur_tick() > clock.last_tick() {
+                    world_query.for_each_mut(ecs, |(world_id, world, arena, queue)| {
+                        ticket::add_ticket(*world_id, world, clock, cmd, arena, queue);
+                    })
+                }
+            }),
+    );
+}
 
 pub fn world_update_system(schedule_builder: &mut legion::systems::Builder) {
     schedule_builder.add_system(
         legion::SystemBuilder::new("WorldUpdateSystem")
-            .with_query(<(Entity, Write<World>)>::query().filter(component::<Active>()))
+            .with_query(
+                <(Entity, Write<ticket::TicketArena>)>::query().filter(component::<Active>()),
+            )
             .read_resource::<crate::clock::Clock>()
-            .build(|cmd, ecs, clock, world_query| {
+            .build(|_, ecs, clock, world_query| {
                 if clock.cur_tick() > clock.last_tick() {
                     info!("***Updating Worlds***");
-                    world_query.for_each_mut(ecs, |(world_id, world)| {
+                    world_query.for_each_mut(ecs, |(world_id, arena)| {
                         info!("Upwdating world {:#?}", world_id);
-                        ticket::add_ticket(*world_id, world, clock, cmd);
 
-                        if let Some(prop) = world.ticket_queue.pop_front() {
-                            let (_, pos, _, _, idx) = prop;
-                            world.chunk_set_ticket_idx(&pos, idx, cmd);
-                            if let Ok(Some(mut new_prop)) = ticket::propagate(prop) {
-                                new_prop
-                                    .drain(..)
-                                    .for_each(|prop| world.ticket_queue.push_back(prop));
-                            }
-                        }
-
-                        let mut remove = world
-                            .ticket_arena
+                        let mut remove = arena
                             .iter()
                             .map(
                                 |(idx, ticket)| match ticket::update(ticket, clock.cur_tick()) {
@@ -207,7 +240,7 @@ pub fn world_update_system(schedule_builder: &mut legion::systems::Builder) {
                             .filter_map(Result::ok)
                             .collect::<Vec<_>>();
                         remove.drain(..).for_each(|idx| {
-                            world.ticket_arena.remove(idx);
+                            arena.remove(idx);
                         })
                     })
                 }
@@ -254,7 +287,7 @@ pub trait WorldType: Send + Sync {
         &self,
         pos: &chunk::Position,
         reg: &voxel::Registry,
-        out: &mut arrayvec::ArrayVec<[u64; chunk::VOXELS_IN_CHUNK]>,
+        out: &mut arrayvec::ArrayVec<[voxel::Id; chunk::VOXELS_IN_CHUNK]>,
     ) -> Result<()>;
     fn world_type(&self) -> &'static str;
 }
@@ -267,7 +300,7 @@ impl WorldType for FlatWorldType {
         &self,
         pos: &chunk::Position,
         reg: &voxel::Registry,
-        out: &mut arrayvec::ArrayVec<[u64; chunk::VOXELS_IN_CHUNK]>,
+        out: &mut arrayvec::ArrayVec<[voxel::Id; chunk::VOXELS_IN_CHUNK]>,
     ) -> Result<()> {
         let transparent_voxel = reg
             .key_from_string_id(crate::consts::TRANSPARENT_VOXEL)
@@ -277,7 +310,7 @@ impl WorldType for FlatWorldType {
             Ordering::Greater => [transparent_voxel; chunk::VOXELS_IN_CHUNK].into(),
             Ordering::Less => [opaque_voxel; chunk::VOXELS_IN_CHUNK].into(),
             Ordering::Equal => {
-                let mut tmp: arrayvec::ArrayVec<[u64; chunk::VOXELS_IN_CHUNK]> =
+                let mut tmp: arrayvec::ArrayVec<[voxel::Id; chunk::VOXELS_IN_CHUNK]> =
                     [transparent_voxel; chunk::VOXELS_IN_CHUNK].into();
                 for idx in 0..crate::consts::CHUNK_SIZE_USIZE * crate::consts::CHUNK_SIZE_USIZE {
                     tmp[idx] = opaque_voxel;

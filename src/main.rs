@@ -33,7 +33,8 @@ fn main() -> Result<()> {
 
     let mut chunk_group = storage::GroupDef::new();
     chunk_group.add(storage::ComponentTypeId::of::<geom::chunk::Position>());
-    chunk_group.add(storage::ComponentTypeId::of::<geom::chunk::Data>());
+    chunk_group.add(storage::ComponentTypeId::of::<geom::chunk::Voxels>());
+    chunk_group.add(storage::ComponentTypeId::of::<geom::chunk::VisibleVoxels>());
 
     let world_options = WorldOptions {
         groups: vec![chunk_group],
@@ -49,8 +50,8 @@ fn main() -> Result<()> {
     let mut world_type_reg = geom::world::TypeRegistry::new();
     let world_type = world_type_reg.register_world_type(Box::new(geom::world::FlatWorldType {}));
 
-    let active_world = geom::world::World::new(world_type);
-    ecs.push((active_world, geom::world::Active {}));
+    let (world_type, active_world, arena, queue) = geom::world::new_world(world_type);
+    ecs.push((world_type, active_world, arena, queue, geom::world::Active {}));
 
     let clock = clock::Clock::new();
 
@@ -68,7 +69,9 @@ fn main() -> Result<()> {
     let mut schedule_builder = Schedule::builder();
 
     geom::chunk::system(&mut schedule_builder);
+    geom::world::ticket_queue(&mut schedule_builder);
     geom::world::world_update_system(&mut schedule_builder);
+    geom::world::add_player_ticket_system(&mut schedule_builder);
     update_every_tick_system(&mut schedule_builder);
     render_system(&mut schedule_builder);
     render::chunk::remove_system(&mut schedule_builder);

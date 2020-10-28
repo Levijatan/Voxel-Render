@@ -1,8 +1,8 @@
 use anyhow::{anyhow, ensure, Result};
-use legion::{component, systems, Entity, IntoQuery, Read, SystemBuilder, Write};
+use legion::{component, maybe_changed, systems, Entity, IntoQuery, Read, SystemBuilder, Write};
 use log::info;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
-use std::hash::{Hash, Hasher};
+use std::hash::Hash;
 
 use super::util;
 use super::voxel;
@@ -12,10 +12,9 @@ pub const VOXELS_IN_CHUNK: usize = crate::consts::CHUNK_SIZE_USIZE
     * crate::consts::CHUNK_SIZE_USIZE
     * crate::consts::CHUNK_SIZE_USIZE;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Position {
     pub pos: glm::TVec3<i32>,
-    pub world_id: Entity,
 }
 
 impl Position {
@@ -40,28 +39,14 @@ impl Position {
     }
 }
 
-impl PartialEq for Position {
-    fn eq(&self, other: &Self) -> bool {
-        self.pos == other.pos
-    }
-}
-
-impl Hash for Position {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.pos.hash(state);
-    }
-}
-
-impl Eq for Position {}
-
-#[derive(Copy, Clone, Debug)]
-enum State {
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum State {
     Gen(SubState),
     Update(SubState),
 }
 
-#[derive(Copy, Clone, Debug)]
-enum SubState {
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum SubState {
     Voxel,
     Transparent,
     Visibility,
@@ -69,18 +54,11 @@ enum SubState {
     Waiting,
 }
 
-#[derive(Clone, Debug)]
-pub struct Data {
-    voxels: arrayvec::ArrayVec<[u64; VOXELS_IN_CHUNK]>,
-    visible_voxels: arrayvec::ArrayVec<[bool; VOXELS_IN_CHUNK]>,
-    state: State,
-}
-
-impl Data {
+impl State {
     fn next_state(&mut self) {
         use State::{Gen, Update};
         use SubState::{Transparent, Visibility, Voxel, VoxelVisibilty, Waiting};
-        self.state = match self.state {
+        *self = match self {
             Gen(Voxel) => Gen(Transparent),
             Gen(Transparent) => Gen(Visibility),
             Gen(Visibility) => Gen(VoxelVisibilty),
@@ -88,7 +66,8 @@ impl Data {
             | Update(Transparent)
             | Update(Visibility)
             | Update(VoxelVisibilty) => Update(Waiting),
-            _ => self.state,
+            Update(Voxel) => Gen(Voxel),
+            _ => *self,
         };
     }
 
@@ -96,53 +75,57 @@ impl Data {
         use State::Update;
         use SubState::{Transparent, Visibility, VoxelVisibilty};
         match state {
-            Update(Transparent) | Update(Visibility) | Update(VoxelVisibilty) => self.state = state,
+            Update(Transparent) | Update(Visibility) | Update(VoxelVisibilty) => *self = state,
             _ => return Err(anyhow!("{:?} not allowed!", state)),
         };
 
         Ok(())
     }
 
-    pub fn gen_render_instances(&self, pos: &Position) -> Vec<crate::render::state::Instance> {
-        use crate::render::state::Instance;
-
-        let chunk_pos = pos.get_f32_pos() * crate::consts::CHUNK_SIZE_F32;
-
-        let offset = crate::consts::CHUNK_SIZE_F32;
-
-        (0..VOXELS_IN_CHUNK)
-            .into_par_iter()
-            .map(|idx| {
-                if self.visible_voxels[idx] {
-                    let voxel_pos = util::idx_to_pos(idx);
-                    let position = (chunk_pos + voxel_pos) * crate::consts::VOXEL_SIZE
-                        - glm::vec3(offset, offset, offset);
-                    let rotation = glm::quat_angle_axis(0.0, &glm::Vec3::z_axis().into_inner());
-                    Ok(Instance { position, rotation })
-                } else {
-                    Err(())
-                }
-            })
-            .filter_map(Result::ok)
-            .collect::<Vec<_>>()
-    }
-
     pub const fn ready_for_render(&self) -> bool {
-        match self.state {
+        match self {
             State::Update(_) => true,
             State::Gen(_) => false,
         }
     }
 }
 
-pub fn new(pos: Position) -> (Position, Data) {
-    let d = Data {
-        voxels: arrayvec::ArrayVec::new(),
-        visible_voxels: arrayvec::ArrayVec::new(),
-        state: State::Gen(SubState::Voxel),
-    };
+pub type Voxels = arrayvec::ArrayVec<[voxel::Id; VOXELS_IN_CHUNK]>;
+pub type VisibleVoxels = arrayvec::ArrayVec<[bool; VOXELS_IN_CHUNK]>;
 
-    (pos, d)
+pub fn gen_render_instances(
+    visible_voxels: &VisibleVoxels,
+    pos: &Position,
+) -> Vec<crate::render::state::Instance> {
+    use crate::render::state::Instance;
+
+    let chunk_pos = pos.get_f32_pos() * crate::consts::CHUNK_SIZE_F32;
+
+    let offset = crate::consts::CHUNK_SIZE_F32;
+
+    (0..VOXELS_IN_CHUNK)
+        .into_par_iter()
+        .map(|idx| {
+            if visible_voxels[idx] {
+                let voxel_pos = util::idx_to_pos(idx);
+                let position = (chunk_pos + voxel_pos) * crate::consts::VOXEL_SIZE
+                    - glm::vec3(offset, offset, offset);
+                let rotation = glm::quat_angle_axis(0.0, &glm::Vec3::z_axis().into_inner());
+                Ok(Instance { position, rotation })
+            } else {
+                Err(())
+            }
+        })
+        .filter_map(Result::ok)
+        .collect::<Vec<_>>()
+}
+
+pub fn new(world: world::Id, pos: Position) -> (world::Id, Position, Voxels, VisibleVoxels, State) {
+    let voxels = Voxels::new();
+    let visible_voxels = VisibleVoxels::new();
+    let state = State::Gen(SubState::Voxel);
+
+    (world, pos, voxels, visible_voxels, state)
 }
 
 pub fn voxel_in(pos: &glm::Vec3) -> bool {
@@ -151,16 +134,16 @@ pub fn voxel_in(pos: &glm::Vec3) -> bool {
 }
 
 #[optick_attr::profile]
-fn is_voxel_visible(pos: &glm::Vec3, voxreg: &voxel::Registry, data: &Data) -> Result<bool> {
+fn is_voxel_visible(pos: &glm::Vec3, voxreg: &voxel::Registry, voxels: &Voxels) -> Result<bool> {
     let n_idx = util::calc_idx_pos(pos)?;
-    Ok(voxreg.is_transparent(data.voxels[n_idx]))
+    Ok(voxreg.is_transparent(voxels[n_idx]))
 }
 
 #[optick_attr::profile]
 fn is_voxel_visible_neighbor_chunk(
     dir: util::Direction,
     pos: &Position,
-    world: &world::World,
+    world: &world::Map,
 ) -> bool {
     let n_pos = pos.neighbor(dir).unwrap();
     match world.chunk_is_transparent(&n_pos, dir) {
@@ -169,18 +152,36 @@ fn is_voxel_visible_neighbor_chunk(
     }
 }
 
-fn is_vox_transparent(x: usize, y: usize, z: usize, data: &Data, voxreg: &voxel::Registry) -> bool {
+fn is_vox_transparent(
+    x: usize,
+    y: usize,
+    z: usize,
+    voxels: &Voxels,
+    voxreg: &voxel::Registry,
+) -> bool {
     let idx = util::calc_idx(x, y, z).unwrap();
-    let vox = data.voxels.get(idx).unwrap();
+    let vox = voxels.get(idx).unwrap();
     voxreg.is_transparent(*vox)
 }
 
 pub fn system(schedule_builder: &mut systems::Builder) {
+    voxels_system(schedule_builder);
+    transparent_system(schedule_builder);
+    visibility_system(schedule_builder);
+    voxel_visibility_system(schedule_builder);
+}
+
+fn voxels_system(schedule_builder: &mut systems::Builder) {
     schedule_builder.add_system(
-        SystemBuilder::new("UpdateChunk")
-            .with_query(<(Read<Position>, Write<Data>)>::query())
+        SystemBuilder::new("VoxelGenSystem")
+            .with_query(<(
+                Read<world::Id>,
+                Read<Position>,
+                Write<Voxels>,
+                Write<State>,
+            )>::query())
             .with_query(
-                <(Entity, Read<world::World>)>::query().filter(component::<world::Active>()),
+                <(Entity, Read<world::TypeId>)>::query().filter(component::<world::Active>()),
             )
             .read_resource::<voxel::Registry>()
             .read_resource::<world::TypeRegistry>()
@@ -188,105 +189,154 @@ pub fn system(schedule_builder: &mut systems::Builder) {
             .build(
                 |_, ecs, (vox_reg, world_type_reg, clock), (chunk_query, world_query)| {
                     if clock.cur_tick() > clock.last_tick() {
-                        info!("***Updating Chunks***");
-                        let (mut chunk_ecs, world_ecs) = ecs.split_for_query(chunk_query);
-                        world_query.for_each(&world_ecs, |(world_id, world)| {
-                            chunk_query.par_for_each_mut(&mut chunk_ecs, |(pos, data)| {
-                                if pos.world_id == *world_id && world.chunk_has_ticket(pos) {
-                                    match data.state {
-                                        State::Gen(val) => gen_chunk(
-                                            val,
+                        let (world_ecs, mut chunk_ecs) = ecs.split_for_query(world_query);
+                        world_query.for_each(&world_ecs, |(world_id, world_type)| {
+                            chunk_query.par_for_each_mut(
+                                &mut chunk_ecs,
+                                |(chunk_world_id, pos, voxels, state)| {
+                                    if chunk_world_id == world_id
+                                        && *state == State::Gen(SubState::Voxel)
+                                    {
+                                        gen_voxel(
                                             pos,
-                                            data,
-                                            world,
-                                            world.world_type,
+                                            voxels,
+                                            *world_type,
                                             world_type_reg,
                                             vox_reg,
-                                        ),
-                                        State::Update(val) => {
-                                            update_chunk(val, pos, data, world, vox_reg)
-                                        }
-                                    };
-                                    data.next_state();
-                                }
-                            });
-                        });
+                                        )
+                                        .unwrap();
+                                        state.next_state();
+                                    }
+                                },
+                            )
+                        })
                     }
                 },
             ),
     );
 }
 
-fn gen_chunk(
-    state: SubState,
-    pos: &Position,
-    data: &mut Data,
-    world: &world::World,
-    world_type: u32,
-    world_type_reg: &world::TypeRegistry,
-    vox_reg: &voxel::Registry,
-) {
-    use SubState::{Transparent, Visibility, Voxel, VoxelVisibilty, Waiting};
-    info!("Generating Chunk at {:#?}", pos);
-    match state {
-        Voxel => gen_voxel(pos, data, world_type, world_type_reg, vox_reg).unwrap(),
-        Transparent => gen_transparent(pos, world, data, vox_reg),
-        Visibility => gen_visibility(pos, world),
-        VoxelVisibilty => gen_voxel_visibility(pos, data, world, vox_reg),
-        Waiting => {}
-    }
+fn transparent_system(schedule_builder: &mut systems::Builder) {
+    schedule_builder.add_system(
+        SystemBuilder::new("ChunkTransparencySystem")
+            .with_query(<(
+                Read<world::Id>,
+                Read<Position>,
+                Read<Voxels>,
+                Write<State>,
+            )>::query())
+            .with_query(<(Entity, Read<world::Map>)>::query().filter(component::<world::Active>()))
+            .read_resource::<voxel::Registry>()
+            .read_resource::<crate::clock::Clock>()
+            .build(|_, ecs, (vox_reg, clock), (chunk_query, world_query)| {
+                if clock.cur_tick() > clock.last_tick() {
+                    let (world_ecs, mut chunk_ecs) = ecs.split_for_query(world_query);
+                    world_query.for_each(&world_ecs, |(world_id, map)| {
+                        chunk_query.par_for_each_mut(
+                            &mut chunk_ecs,
+                            |(chunk_world_id, pos, voxels, state)| {
+                                if world_id == chunk_world_id
+                                    && (*state == State::Gen(SubState::Transparent)
+                                        || *state == State::Update(SubState::Transparent))
+                                {
+                                    update_transparent(pos, voxels, map, vox_reg);
+                                    state.next_state();
+                                }
+                            },
+                        )
+                    })
+                }
+            }),
+    );
+}
+
+fn visibility_system(schedule_builder: &mut systems::Builder) {
+    schedule_builder.add_system(
+        SystemBuilder::new("ChunkVisibilitySystem")
+            .with_query(<(Read<world::Id>, Read<Position>, Write<State>)>::query())
+            .with_query(<(Entity, Read<world::Map>)>::query().filter(component::<world::Active>()))
+            .read_resource::<crate::clock::Clock>()
+            .build(|_, ecs, clock, (chunk_query, world_query)| {
+                if clock.cur_tick() > clock.last_tick() {
+                    let (world_ecs, mut chunk_ecs) = ecs.split_for_query(world_query);
+                    world_query.for_each(&world_ecs, |(world_id, map)| {
+                        chunk_query.par_for_each_mut(
+                            &mut chunk_ecs,
+                            |(chunk_world_id, pos, state)| {
+                                if world_id == chunk_world_id
+                                    && (*state == State::Gen(SubState::Visibility)
+                                        || *state == State::Update(SubState::Visibility))
+                                {
+                                    update_visibility(pos, map);
+                                    state.next_state();
+                                }
+                            },
+                        )
+                    })
+                }
+            }),
+    );
+}
+
+fn voxel_visibility_system(schedule_builder: &mut systems::Builder) {
+    schedule_builder.add_system(
+        SystemBuilder::new("UpdateChunk")
+            .with_query(
+                <(
+                    Read<world::Id>,
+                    Read<Position>,
+                    Read<Voxels>,
+                    Write<VisibleVoxels>,
+                    Write<State>,
+                )>::query()
+                .filter(maybe_changed::<Voxels>() | maybe_changed::<State>()),
+            )
+            .with_query(
+                <(Entity, Read<world::Map>)>::query()
+                    .filter(component::<world::Active>()),
+            )
+            .read_resource::<voxel::Registry>()
+            .read_resource::<crate::clock::Clock>()
+            .build(|_, ecs, (vox_reg, clock), (chunk_query, world_query)| {
+                if clock.cur_tick() > clock.last_tick() {
+                    info!("***Updating Chunks***");
+                    let (mut chunk_ecs, world_ecs) = ecs.split_for_query(chunk_query);
+                    world_query.for_each(&world_ecs, |(world_id, world)| {
+                        chunk_query.par_for_each_mut(
+                            &mut chunk_ecs,
+                            |(chunk_world_id, pos, voxels, visible_voxels, state)| {
+                                if chunk_world_id == world_id
+                                    && (*state == State::Gen(SubState::VoxelVisibilty)
+                                        || *state == State::Update(SubState::VoxelVisibilty))
+                                {
+                                    update_voxel_visibility(pos, &voxels, visible_voxels, world, vox_reg);
+                                    state.next_state();
+                                }
+                            },
+                        );
+                    });
+                }
+            }),
+    );
 }
 
 fn gen_voxel(
     pos: &Position,
-    data: &mut Data,
+    voxels: &mut Voxels,
     world_type: u32,
     world_type_reg: &world::TypeRegistry,
     vox_reg: &voxel::Registry,
 ) -> Result<()> {
     info!("Generating voxels at {:#?}", pos);
     let world_type = world_type_reg.world_type(world_type)?;
-    world_type.gen_chunk(pos, vox_reg, &mut data.voxels)?;
+    world_type.gen_chunk(pos, vox_reg, voxels)?;
     Ok(())
-}
-
-fn gen_transparent(pos: &Position, world: &world::World, data: &Data, vox_reg: &voxel::Registry) {
-    update_transparent(pos, data, world, vox_reg)
-}
-
-fn gen_visibility(pos: &Position, world: &world::World) {
-    update_visibility(pos, world)
-}
-
-fn gen_voxel_visibility(
-    pos: &Position,
-    data: &mut Data,
-    world: &world::World,
-    vox_reg: &voxel::Registry,
-) {
-    update_voxel_visibility(pos, data, world, vox_reg)
-}
-
-fn update_chunk(
-    state: SubState,
-    pos: &Position,
-    data: &mut Data,
-    world: &world::World,
-    vox_reg: &voxel::Registry,
-) {
-    info!("Updating chunk at {:#?}", pos);
-    match state {
-        SubState::Transparent => update_transparent(pos, data, world, vox_reg),
-        SubState::Visibility => update_visibility(pos, world),
-        SubState::VoxelVisibilty => update_voxel_visibility(pos, data, world, vox_reg),
-        _ => {}
-    }
 }
 
 fn update_transparent(
     pos: &Position,
-    data: &Data,
-    world: &world::World,
+    data: &Voxels,
+    world: &world::Map,
     vox_reg: &voxel::Registry,
 ) {
     use crate::consts::CHUNK_SIZE_USIZE;
@@ -342,7 +392,7 @@ fn update_transparent(
     world.chunk_set_transparency(pos, transparency).unwrap();
 }
 
-fn update_visibility(pos: &Position, world: &world::World) {
+fn update_visibility(pos: &Position, world: &world::Map) {
     let mut visible = false;
     info!("visibility at {:#?}", pos);
     for dir in &util::ALL_DIRECTIONS {
@@ -359,22 +409,23 @@ fn update_visibility(pos: &Position, world: &world::World) {
 
 fn update_voxel_visibility(
     pos: &Position,
-    data: &mut Data,
-    world: &world::World,
+    voxels: &Voxels,
+    visible_voxels: &mut VisibleVoxels,
+    world: &world::Map,
     vox_reg: &voxel::Registry,
 ) {
     info!("voxel visibility at {:#?}", pos);
-    data.visible_voxels.clear();
+    visible_voxels.clear();
     (0..VOXELS_IN_CHUNK).into_iter().for_each(|idx| {
         let mut visible = false;
-        if !vox_reg.is_transparent(data.voxels[idx]) {
+        if !vox_reg.is_transparent(voxels[idx]) {
             let voxel_pos = util::idx_to_pos(idx);
 
             for dir in &util::ALL_DIRECTIONS {
                 let n_pos = voxel_pos + util::normals_f32(*dir);
                 let tmp: bool;
                 if voxel_in(&n_pos) {
-                    tmp = is_voxel_visible(&n_pos, vox_reg, data).unwrap()
+                    tmp = is_voxel_visible(&n_pos, vox_reg, voxels).unwrap()
                 } else {
                     tmp = is_voxel_visible_neighbor_chunk(*dir, pos, world)
                 }
@@ -384,6 +435,6 @@ fn update_voxel_visibility(
                 }
             }
         }
-        data.visible_voxels.push(visible);
+        visible_voxels.push(visible);
     });
 }
