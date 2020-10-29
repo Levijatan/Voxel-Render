@@ -1,4 +1,4 @@
-#![warn(clippy::all)]
+#![warn(clippy::all, clippy::nursery, clippy::pedantic)]
 
 extern crate nalgebra_glm as glm;
 
@@ -50,12 +50,12 @@ fn main() -> Result<()> {
     let mut world_type_reg = geom::world::TypeRegistry::new();
     let world_type = world_type_reg.register_world_type(Box::new(geom::world::FlatWorldType {}));
 
-    let (world_type, active_world, arena, queue) = geom::world::new_world(world_type);
+    let (world_type, active_world, arena, queue) = geom::world::new(world_type);
     ecs.push((world_type, active_world, arena, queue, geom::world::Active {}));
 
     let clock = clock::Clock::new();
 
-    let state = block_on(render::state::State::new(&window))?;
+    block_on(render::state::new(&window, &mut resources));
 
     let chunk_renderer = render::chunk::Renderer::new();
 
@@ -63,14 +63,13 @@ fn main() -> Result<()> {
     resources.insert(world_type_reg);
     resources.insert(clock);
     resources.insert(chunk_renderer);
-    resources.insert(state);
     resources.insert(input);
 
     let mut schedule_builder = Schedule::builder();
 
     geom::chunk::system(&mut schedule_builder);
     geom::world::ticket_queue(&mut schedule_builder);
-    geom::world::world_update_system(&mut schedule_builder);
+    geom::world::update_system(&mut schedule_builder);
     geom::world::add_player_ticket_system(&mut schedule_builder);
     update_every_tick_system(&mut schedule_builder);
     render_system(&mut schedule_builder);
@@ -108,13 +107,13 @@ fn main() -> Result<()> {
                             }
                             _ => {}
                         },
-                        WindowEvent::Resized(physiical_size) => {
-                            let mut state = resources.get_mut::<render::state::State>().unwrap();
-                            state.resize(*physiical_size);
+                        WindowEvent::Resized(physical_size) => {
+                            drop(input);
+                            render::state::resize(*physical_size, &mut resources);
                         }
                         WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
-                            let mut state = resources.get_mut::<render::state::State>().unwrap();
-                            state.resize(**new_inner_size);
+                            drop(input);
+                            render::state::resize(**new_inner_size, &mut resources);
                         }
                         _ => {}
                     }
@@ -145,13 +144,17 @@ fn update_every_tick_system(schedule_builder: &mut legion::systems::Builder) {
 fn update_system(schedule_builder: &mut legion::systems::Builder) {
     schedule_builder.add_system(legion::SystemBuilder::new("UpdateSystem")
         .write_resource::<clock::Clock>()
-        .write_resource::<render::state::State>()
+        .write_resource::<render::uniforms::State>()
+        .write_resource::<render::light::State>()
         .write_resource::<input::State>()
-        .build(|_, _, (clock, render, input), _| {
+        .write_resource::<wgpu::Queue>()
+        .write_resource::<render::camera::Camera>()
+        .build(|_, _, (clock, uniform, light, input, queue, camera), _| {
             clock.tick();
             let dt = clock.delta();
-            render.update(dt);
-            input.update(&mut render.camera, dt);
+            uniform.update(camera, queue);
+            light.update(queue, &dt);
+            input.update(camera, dt);
         }),
     );
 }
@@ -162,10 +165,19 @@ fn render_system(schedule_builder: &mut legion::systems::Builder) {
             Read<geom::chunk::Position>,
             Read<render::chunk::Component>,
         )>::query())
-        .read_resource::<render::state::State>()
-        .build(|_, ecs, state, chunk_query| {
-            let frame = state.get_current_frame_output();
-            let mut encoder = state.create_command_encoder();
+        .read_resource::<wgpu::Device>()
+        .read_resource::<render::chunk::State>()
+        .read_resource::<render::light::State>()
+        .read_resource::<render::uniforms::State>()
+        .read_resource::<render::camera::Camera>()
+        .read_resource::<render::texture::Texture>()
+        .write_resource::<wgpu::SwapChain>()
+        .write_resource::<wgpu::Queue>()
+        .build(|_, ecs, (device, chunk_state, light_state, uniforms_state, camera, depth_texture, swap_chain, queue), chunk_query| {
+            let frame = swap_chain.get_current_frame().expect("Timeout getting texture").output;
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Render Encoder"),
+            });
             {
                 let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
@@ -183,7 +195,7 @@ fn render_system(schedule_builder: &mut legion::systems::Builder) {
                     }],
                     depth_stencil_attachment: Some(
                         wgpu::RenderPassDepthStencilAttachmentDescriptor {
-                            attachment: &state.depth_texture.view,
+                            attachment: &depth_texture.view,
                             depth_ops: Some(wgpu::Operations {
                                 load: wgpu::LoadOp::Clear(1.0),
                                 store: true,
@@ -193,33 +205,33 @@ fn render_system(schedule_builder: &mut legion::systems::Builder) {
                     ),
                 });
 
-                render_pass.set_pipeline(&state.light_state.render_pipeline);
+                render_pass.set_pipeline(&light_state.render_pipeline);
                 render_pass.draw_light_model(
-                    &state.chunk_state.voxel_model,
-                    &state.uniforms_state.bind_group,
-                    &state.light_state.bind_group,
+                    &chunk_state.voxel_model,
+                    &uniforms_state.bind_group,
+                    &light_state.bind_group,
                 );
 
-                render_pass.set_pipeline(&state.chunk_state.render_pipeline);
+                render_pass.set_pipeline(&chunk_state.render_pipeline);
 
                 let chunk_size = consts::CHUNK_SIZE_F32 * consts::VOXEL_SIZE;
                 let half_size = chunk_size / 2.0;
                 chunk_query.for_each(ecs, |(pos, ren)| {
                     let voxel_pos: glm::Vec3 = (pos.get_f32_pos() * chunk_size)
                         - glm::vec3(half_size, half_size, half_size);
-                    if state.camera.cube_in_view(&voxel_pos, half_size) {
+                    if camera.cube_in_view(&voxel_pos, half_size) {
                         render_pass.draw_chunk(
-                            &state.chunk_state.voxel_model,
+                            &chunk_state.voxel_model,
                             ren.offset..(ren.amount + ren.offset),
-                            &state.chunk_state.bind_group,
-                            &state.uniforms_state.bind_group,
-                            &state.light_state.bind_group,
+                            &chunk_state.bind_group,
+                            &uniforms_state.bind_group,
+                            &light_state.bind_group,
                             0,
                         );
                     }
                 });
             }
-            state.queue.submit(std::iter::once(encoder.finish()));
+            queue.submit(std::iter::once(encoder.finish()));
         }),
     );
 }

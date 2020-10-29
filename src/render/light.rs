@@ -78,7 +78,7 @@ impl State {
                 &layout,
                 sc_desc.format,
                 Some(texture::Texture::DEPTH_FORMAT),
-                &[model::ModelVertex::desc()],
+                &[model::MVertex::desc()],
                 wgpu::include_spirv!("../shaders/light.vert.spv"),
                 wgpu::include_spirv!("../shaders/light.frag.spv"),
             )

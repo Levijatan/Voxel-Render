@@ -11,7 +11,7 @@ pub trait Vertex {
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
-pub struct ModelVertex {
+pub struct MVertex {
     position: glm::Vec3,
     tex_coords: glm::Vec2,
     normal: glm::Vec3,
@@ -19,10 +19,10 @@ pub struct ModelVertex {
     bitangent: glm::Vec3,
 }
 
-unsafe impl bytemuck::Zeroable for ModelVertex {}
-unsafe impl bytemuck::Pod for ModelVertex {}
+unsafe impl bytemuck::Zeroable for MVertex {}
+unsafe impl bytemuck::Pod for MVertex {}
 
-impl Vertex for ModelVertex {
+impl Vertex for MVertex {
     #[optick_attr::profile]
     fn desc<'a>() -> wgpu::VertexBufferDescriptor<'a> {
         use std::mem;
@@ -173,7 +173,7 @@ impl Model {
                 let mut vertices = (0..m.mesh.positions.len() / 3)
                     .into_par_iter()
                     .map(|i| {
-                        ModelVertex {
+                        MVertex {
                             position: [
                                 m.mesh.positions[i * 3],
                                 m.mesh.positions[i * 3 + 1],

@@ -1,19 +1,12 @@
-use anyhow::{anyhow, ensure, Result};
+use anyhow::{anyhow, Result};
+use cached::proc_macro::cached;
 
 #[optick_attr::profile]
-pub fn voxel_to_chunk_pos(voxel_pos: &glm::Vec3) -> glm::Vec3 {
-    let size = crate::consts::CHUNK_SIZE_F32;
-    let x = (voxel_pos.x / size).floor();
-    let y = (voxel_pos.y / size).floor();
-    let z = (voxel_pos.z / size).floor();
-    glm::vec3(x, y, z)
-}
-
-#[optick_attr::profile]
-pub fn calc_idx(x: usize, y: usize, z: usize) -> Result<usize> {
+#[cached]
+pub fn calc_idx(x: usize, y: usize, z: usize) -> usize {
     let size = crate::consts::CHUNK_SIZE_USIZE;
     let out = (y * size * size) + (z * size) + x;
-    ensure!(
+    assert!(
         out < size * size * size,
         "Cannot use larger x:{}, y:{}, z:{} than CHUNK_SIZE:{}",
         x,
@@ -21,19 +14,19 @@ pub fn calc_idx(x: usize, y: usize, z: usize) -> Result<usize> {
         z,
         size
     );
-    Ok(out)
+    out
 }
 
 #[optick_attr::profile]
-pub fn calc_idx_pos(pos: &glm::Vec3) -> Result<usize> {
+pub fn calc_idx_pos(pos: &glm::Vec3) -> usize {
     let x: usize = pos.x as usize;
     let y: usize = pos.y as usize;
     let z: usize = pos.z as usize;
-    let out = calc_idx(x, y, z)?;
-    Ok(out)
+    calc_idx(x, y, z)
 }
 
 #[optick_attr::profile]
+#[cached]
 pub fn idx_to_pos(idx: usize) -> glm::Vec3 {
     let size = crate::consts::CHUNK_SIZE_USIZE;
     let i = idx;
@@ -146,27 +139,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_voxel_to_chunk_pos() {
-        let pos = glm::vec3(17.0, 0.0, 14.0);
-        let chunk_pos = voxel_to_chunk_pos(&pos);
-        assert_eq!(chunk_pos, glm::vec3(1.0, 0.0, 0.0));
-    }
-
-    #[test]
-    fn test_calc_idx() -> Result<()> {
-        let idx = calc_idx(1, 0, 15)?;
+    fn test_calc_idx() {
+        let idx = calc_idx(1, 0, 15);
         assert_eq!(idx, 241);
-        Ok(())
     }
 
     #[test]
-    fn test_idx_to_pos() -> Result<()> {
-        let idx = calc_idx(15, 1, 0)?;
+    fn test_idx_to_pos() {
+        let idx = calc_idx(15, 1, 0);
         let pos = idx_to_pos(idx);
         assert!((pos.x - 15.0).abs() < f32::EPSILON);
         assert!((pos.y - 1.0).abs() < f32::EPSILON);
         assert!(pos.z == 0.0);
-        Ok(())
     }
 
     #[test]

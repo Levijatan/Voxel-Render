@@ -3,9 +3,7 @@ use super::chunk;
 use super::light;
 use super::texture;
 use super::uniforms;
-use anyhow::Result;
 use std::convert::TryInto;
-use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Instance {
@@ -86,144 +84,115 @@ pub fn create_render_pipeline(
     })
 }
 
-pub struct State {
-    surface: wgpu::Surface,
-    pub device: wgpu::Device,
-    pub queue: wgpu::Queue,
-    pub sc_desc: wgpu::SwapChainDescriptor,
-    pub swap_chain: Arc<Mutex<wgpu::SwapChain>>,
-    pub camera: camera::Camera,
-    pub light_state: light::State,
-    pub uniforms_state: uniforms::State,
-    pub chunk_state: chunk::State,
-    #[allow(dead_code)]
-    pub depth_texture: texture::Texture,
-    size: winit::dpi::PhysicalSize<u32>,
+
+
+pub async fn new(window: &winit::window::Window, resource: &mut legion::Resources) {
+    let size = window.inner_size();
+
+    // The instance is a handle to our GPU
+    // BackendBit::PRIMARY => Vulkan + Metal + DX12 + Browser WebGPU
+    let instance = wgpu::Instance::new(wgpu::BackendBit::PRIMARY);
+    let surface = unsafe { instance.create_surface(window) };
+    let adapter = instance
+        .request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::Default,
+            compatible_surface: Some(&surface),
+        })
+        .await
+        .unwrap();
+    let (device, queue) = adapter
+        .request_device(
+            &wgpu::DeviceDescriptor {
+                features: wgpu::Features::empty(),
+                limits: wgpu::Limits::default(),
+                shader_validation: true,
+            },
+            None,
+        )
+        .await.unwrap();
+
+    let sc_desc = wgpu::SwapChainDescriptor {
+        usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
+        format: wgpu::TextureFormat::Bgra8UnormSrgb,
+        width: size.width,
+        height: size.height,
+        present_mode: wgpu::PresentMode::Fifo,
+    };
+
+    let swap_chain = device.create_swap_chain(&surface, &sc_desc);
+
+    let projection = camera::Projection::new(sc_desc.width as f32, sc_desc.height as f32, 45.0, 0.1, 1000.0);
+
+    let camera = camera::Camera::new(
+        glm::vec3(0.0, 5.0, 10.0),
+        -90.0,
+        -20.0,
+        projection,
+    );
+
+    let (uniforms_state, uniform_bind_group_layout) = uniforms::State::new(&camera, &device);
+
+    let (light_state, light_bind_group_layout) =
+        light::State::new(&device, &sc_desc, &uniform_bind_group_layout);
+
+    let chunk_state = chunk::State::new(
+        &device,
+        &sc_desc,
+        &light_bind_group_layout,
+        &uniform_bind_group_layout,
+        &queue,
+    ).unwrap();
+
+    let depth_texture =
+        texture::Texture::create_depth_texture(&device, &sc_desc, "depth_texture");
+
+    resource.insert(surface);
+    resource.insert(device);
+    resource.insert(queue);
+    resource.insert(sc_desc);
+    resource.insert(swap_chain);
+    resource.insert(camera);
+    resource.insert(light_state);
+    resource.insert(chunk_state);
+    resource.insert(uniforms_state);
+    resource.insert(depth_texture);
+    resource.insert(size);
 }
 
-impl State {
-    #[optick_attr::profile]
-    pub async fn new(window: &winit::window::Window) -> Result<Self> {
-        let size = window.inner_size();
-
-        // The instance is a handle to our GPU
-        // BackendBit::PRIMARY => Vulkan + Metal + DX12 + Browser WebGPU
-        let instance = wgpu::Instance::new(wgpu::BackendBit::PRIMARY);
-        let surface = unsafe { instance.create_surface(window) };
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::Default,
-                compatible_surface: Some(&surface),
-            })
-            .await
-            .unwrap();
-        let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    features: wgpu::Features::empty(),
-                    limits: wgpu::Limits::default(),
-                    shader_validation: true,
-                },
-                None,
-            )
-            .await?;
-
-        let sc_desc = wgpu::SwapChainDescriptor {
-            usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
-            format: wgpu::TextureFormat::Bgra8UnormSrgb,
-            width: size.width,
-            height: size.height,
-            present_mode: wgpu::PresentMode::Fifo,
-        };
-
-        let swap_chain = Arc::new(Mutex::new(device.create_swap_chain(&surface, &sc_desc)));
-
-        let projection = camera::Projection::new(sc_desc.width as f32, sc_desc.height as f32, 45.0, 0.1, 1000.0);
-
-        let camera = camera::Camera::new(
-            glm::vec3(0.0, 5.0, 10.0),
-            -90.0,
-            -20.0,
-            projection,
-        );
-
-        let (uniforms_state, uniform_bind_group_layout) = uniforms::State::new(&camera, &device);
-
-        let (light_state, light_bind_group_layout) =
-            light::State::new(&device, &sc_desc, &uniform_bind_group_layout);
-
-        let chunk_state = chunk::State::new(
-            &device,
-            &sc_desc,
-            &light_bind_group_layout,
-            &uniform_bind_group_layout,
-            &queue,
-        )?;
-
-        let depth_texture =
-            texture::Texture::create_depth_texture(&device, &sc_desc, "depth_texture");
-
-        Ok(Self {
-            surface,
-            device,
-            queue,
-            sc_desc,
-            swap_chain,
-            camera,
-            light_state,
-            chunk_state,
-            uniforms_state,
-            depth_texture,
-            size,
-        })
-    }
-
-    #[optick_attr::profile]
-    pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
-        self.size = new_size;
-        self.sc_desc.width = new_size.width;
-        self.sc_desc.height = new_size.height;
-        self.camera
+pub fn resize(new_size: winit::dpi::PhysicalSize<u32>, resource: &mut legion::Resources) {
+    resource.insert(new_size);
+    let depth_texture;
+    let swap_chain;
+    {
+        let mut sc_desc = resource.get_mut::<wgpu::SwapChainDescriptor>().unwrap();
+        sc_desc.width = new_size.width;
+        sc_desc.height = new_size.height;
+        let mut camera = resource.get_mut::<camera::Camera>().unwrap();
+        camera
             .projection
             .resize(new_size.width, new_size.height);
-        self.depth_texture = super::texture::Texture::create_depth_texture(
-            &self.device,
-            &self.sc_desc,
+        let device = resource.get::<wgpu::Device>().unwrap();
+        depth_texture = super::texture::Texture::create_depth_texture(
+            &device,
+            &sc_desc,
             "depth_texure",
         );
-        self.swap_chain = Arc::new(Mutex::new(self.device.create_swap_chain(&self.surface, &self.sc_desc)));
+        let surface = resource.get::<wgpu::Surface>().unwrap();
+        swap_chain = device.create_swap_chain(&surface, &sc_desc);
     }
+    resource.insert(depth_texture);
+    resource.insert(swap_chain);
+}
 
-    #[optick_attr::profile]
-    pub fn update(&mut self, dt: std::time::Duration) {
-        self.uniforms_state.update(&self.camera, &mut self.queue);
-        self.light_state.update(&mut self.queue, &dt);
-    }
-
-    #[optick_attr::profile]
-    pub fn create_command_encoder(&self) -> wgpu::CommandEncoder {
-        self.device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Render Encoder"),
-            })
-    }
-
-    #[optick_attr::profile]
-    pub fn set_instance_buffer(&self, instances: &[Instance], offset: u64) {
-        let instance_data = instances.iter().map(Instance::to_raw).collect::<Vec<_>>();
-        let raw_instance_size: u64 = std::mem::size_of::<super::state::InstanceRaw>()
-            .try_into()
-            .unwrap();
-        let rl_offset = offset * raw_instance_size;
-        self.queue.write_buffer(
-            &self.chunk_state.buffer,
-            rl_offset,
-            bytemuck::cast_slice(&instance_data),
-        );
-    }
-
-    pub fn get_current_frame_output(&self) -> wgpu::SwapChainTexture{
-        let mut swap_chain = self.swap_chain.lock().unwrap();
-        swap_chain.get_current_frame().expect("Timeout getting texture").output
-    }
+pub fn set_instance_buffer(queue: &wgpu::Queue, chunk_state: &chunk::State, instances: &[Instance], offset: u64) {
+    let instance_data = instances.iter().map(Instance::to_raw).collect::<Vec<_>>();
+    let raw_instance_size: u64 = std::mem::size_of::<InstanceRaw>()
+        .try_into()
+        .unwrap();
+    let rl_offset = offset * raw_instance_size;
+    queue.write_buffer(
+        &chunk_state.buffer,
+        rl_offset,
+        bytemuck::cast_slice(&instance_data),
+    );
 }

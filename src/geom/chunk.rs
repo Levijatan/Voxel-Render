@@ -71,21 +71,21 @@ impl State {
         };
     }
 
-    fn set_state(&mut self, state: State) -> Result<()> {
-        use State::Update;
-        use SubState::{Transparent, Visibility, VoxelVisibilty};
+    fn set(&mut self, state: Self) -> Result<()> {
+        use State::{Update, Gen};
+        use SubState::{Transparent, Visibility, VoxelVisibilty, Voxel};
         match state {
-            Update(Transparent) | Update(Visibility) | Update(VoxelVisibilty) => *self = state,
+            Update(Transparent) | Update(Visibility) | Update(VoxelVisibilty) | Gen(Voxel) => *self = state,
             _ => return Err(anyhow!("{:?} not allowed!", state)),
         };
 
         Ok(())
     }
 
-    pub const fn ready_for_render(&self) -> bool {
+    pub const fn ready_for_render(self) -> bool {
         match self {
-            State::Update(_) => true,
-            State::Gen(_) => false,
+            Self::Update(_) => true,
+            Self::Gen(_) => false,
         }
     }
 }
@@ -135,7 +135,7 @@ pub fn voxel_in(pos: &glm::Vec3) -> bool {
 
 #[optick_attr::profile]
 fn is_voxel_visible(pos: &glm::Vec3, voxreg: &voxel::Registry, voxels: &Voxels) -> Result<bool> {
-    let n_idx = util::calc_idx_pos(pos)?;
+    let n_idx = util::calc_idx_pos(pos);
     Ok(voxreg.is_transparent(voxels[n_idx]))
 }
 
@@ -159,7 +159,7 @@ fn is_vox_transparent(
     voxels: &Voxels,
     voxreg: &voxel::Registry,
 ) -> bool {
-    let idx = util::calc_idx(x, y, z).unwrap();
+    let idx = util::calc_idx(x, y, z);
     let vox = voxels.get(idx).unwrap();
     voxreg.is_transparent(*vox)
 }
@@ -309,7 +309,7 @@ fn voxel_visibility_system(schedule_builder: &mut systems::Builder) {
                                     && (*state == State::Gen(SubState::VoxelVisibilty)
                                         || *state == State::Update(SubState::VoxelVisibilty))
                                 {
-                                    update_voxel_visibility(pos, &voxels, visible_voxels, world, vox_reg);
+                                    update_voxel_visibility(pos, voxels, visible_voxels, world, vox_reg);
                                     state.next_state();
                                 }
                             },

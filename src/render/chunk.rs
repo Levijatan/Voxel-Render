@@ -88,13 +88,14 @@ pub fn add_system(schedule_builder: &mut systems::Builder) {
                     .filter(!component::<Component>()),
             )
             .with_query(
-                <(Entity, Read<world::Map>, Read<ticket::TicketArena>)>::query().filter(component::<world::Active>()),
+                <(Entity, Read<world::Map>, Read<ticket::Arena>)>::query().filter(component::<world::Active>()),
             )
             .read_resource::<Renderer>()
             .read_resource::<crate::clock::Clock>()
-            .read_resource::<super::state::State>()
+            .read_resource::<wgpu::Queue>()
+            .read_resource::<State>()
             .build(
-                move |cmd, ecs, (renderer, clock, ren), (chunk_query, world_query)| {
+                move |cmd, ecs, (renderer, clock, queue, chunk_state), (chunk_query, world_query)| {
                     let (world_ecs, mut chunk_ecs) = ecs.split_for_query(world_query);
                     world_query.for_each(&world_ecs, |(world_id, world, arena)| {
                         chunk_query
@@ -113,7 +114,7 @@ pub fn add_system(schedule_builder: &mut systems::Builder) {
                                             amount: render.len() as u32,
                                         };
 
-                                        ren.set_instance_buffer(&render, offset as u64);
+                                        super::state::set_instance_buffer(queue, chunk_state, &render, offset as u64);
                                         cmd.add_component(*entity, component);
                                     }
                                 }
@@ -130,7 +131,7 @@ pub fn remove_system(schedule_builder: &mut systems::Builder) {
             .with_query(
                 <(Entity, Read<world::Id>, Read<chunk::Position>, Write<Component>)>::query(),
             )
-            .with_query( <(Entity, Read<world::Map>, Read<ticket::TicketArena>)>::query().filter(component::<world::Active>()))
+            .with_query( <(Entity, Read<world::Map>, Read<ticket::Arena>)>::query().filter(component::<world::Active>()))
             .write_resource::<Renderer>()
             .read_resource::<crate::clock::Clock>()
             .build(move |cmd, ecs, (renderer, clock), (chunk_query, world_query)| {
@@ -139,13 +140,11 @@ pub fn remove_system(schedule_builder: &mut systems::Builder) {
                 world_query.for_each(&world_ecs, |(world_id, world, arena)| {
                     chunk_query.for_each_mut(&mut chunk_ecs, |(entity, chunk_world_id, pos, component)| {
                         if chunk_world_id == world_id {
-                            if !world.chunk_has_ticket(pos, arena) {
-                                if clock.cur_tick() + component.last_tick_with_ticket >= component.ttl {
-                                    renderer.return_offset(component.offset).unwrap();
-                                    cmd.remove_component::<Component>(*entity);
-                                }
-                            } else {
+                            if world.chunk_has_ticket(pos, arena) {
                                 component.last_tick_with_ticket = clock.cur_tick();
+                            } else if clock.cur_tick() + component.last_tick_with_ticket >= component.ttl {
+                                renderer.return_offset(component.offset).unwrap();
+                                cmd.remove_component::<Component>(*entity);
                             }
                         }
                     });
@@ -259,7 +258,7 @@ impl State {
             &render_pipeline_layout,
             sc_desc.format,
             Some(texture::Texture::DEPTH_FORMAT),
-            &[model::ModelVertex::desc()],
+            &[model::MVertex::desc()],
             wgpu::include_spirv!("../shaders/shader.vert.spv"),
             wgpu::include_spirv!("../shaders/shader.frag.spv"),
         );
@@ -280,6 +279,7 @@ impl State {
         })
     }
 }
+
 
 pub trait Draw<'a, 'b>
 where

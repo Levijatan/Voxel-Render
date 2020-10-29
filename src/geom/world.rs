@@ -13,12 +13,12 @@ use std::collections::HashMap;
 pub type TypeId = u32;
 pub type Id = legion::Entity;
 
-pub fn new_world(world_type: TypeId) -> (TypeId, Map, ticket::TicketArena, ticket::TicketQueue) {
+pub fn new(world_type: TypeId) -> (TypeId, Map, ticket::Arena, ticket::Queue) {
     (
         world_type,
         Map::new(),
-        ticket::TicketArena::new(),
-        ticket::TicketQueue::new(),
+        ticket::Arena::new(),
+        ticket::Queue::new(),
     )
 }
 
@@ -57,14 +57,14 @@ impl Map {
         Ok(())
     }
 
-    pub fn chunk_add_ticket(
+    pub fn chunk_add(
         &self,
         value: ticket::Ticket,
         id: Id,
         pos: &chunk::Position,
         cmd: &mut legion::systems::CommandBuffer,
-        arena: &mut ticket::TicketArena,
-        queue: &ticket::TicketQueue,
+        arena: &mut ticket::Arena,
+        queue: &ticket::Queue,
     ) {
         let mut prop = None;
         if let Some(mut meta) = self.chunk_map.get_mut(pos) {
@@ -120,16 +120,10 @@ impl Map {
         }
     }
 
-    pub fn chunk_has_ticket(&self, pos: &chunk::Position, arena: &ticket::TicketArena) -> bool {
-        if let Some(meta) = self.chunk_map.get(pos) {
-            if let Some(ticket_id) = meta.ticket {
-                arena.contains(ticket_id)
-            } else {
-                false
-            }
-        } else {
-            false
-        }
+    pub fn chunk_has_ticket(&self, pos: &chunk::Position, arena: &ticket::Arena) -> bool {
+        self.chunk_map.get(pos)
+            .map_or(false, |meta| meta.ticket
+            .map_or(false, |ticket_id| arena.contains(ticket_id)))
     }
 }
 
@@ -175,9 +169,9 @@ use legion::{component, Entity, IntoQuery, Read, Write};
 
 pub fn ticket_queue(schedule_builder: &mut legion::systems::Builder) {
     schedule_builder.add_system(
-        legion::SystemBuilder::new("WorldTicketQueue")
+        legion::SystemBuilder::new("WorldQueue")
             .with_query(
-                <(Entity, Read<Map>, Read<ticket::TicketQueue>)>::query().filter(component::<Active>()),
+                <(Entity, Read<Map>, Read<ticket::Queue>)>::query().filter(component::<Active>()),
             )
             .build(|cmd, ecs, _, world_query| {
                 world_query.for_each_mut(ecs, |(id, map, queue)| {
@@ -200,8 +194,8 @@ pub fn add_player_ticket_system(schedule_builder: &mut legion::systems::Builder)
                 <(
                     Entity,
                     Read<Map>,
-                    Write<ticket::TicketArena>,
-                    Read<ticket::TicketQueue>,
+                    Write<ticket::Arena>,
+                    Read<ticket::Queue>,
                 )>::query()
                 .filter(component::<Active>()),
             )
@@ -209,18 +203,18 @@ pub fn add_player_ticket_system(schedule_builder: &mut legion::systems::Builder)
             .build(|cmd, ecs, clock, world_query| {
                 if clock.cur_tick() > clock.last_tick() {
                     world_query.for_each_mut(ecs, |(world_id, world, arena, queue)| {
-                        ticket::add_ticket(*world_id, world, clock, cmd, arena, queue);
+                        ticket::add(*world_id, world, clock, cmd, arena, queue);
                     })
                 }
             }),
     );
 }
 
-pub fn world_update_system(schedule_builder: &mut legion::systems::Builder) {
+pub fn update_system(schedule_builder: &mut legion::systems::Builder) {
     schedule_builder.add_system(
         legion::SystemBuilder::new("WorldUpdateSystem")
             .with_query(
-                <(Entity, Write<ticket::TicketArena>)>::query().filter(component::<Active>()),
+                <(Entity, Write<ticket::Arena>)>::query().filter(component::<Active>()),
             )
             .read_resource::<crate::clock::Clock>()
             .build(|_, ecs, clock, world_query| {
@@ -249,7 +243,7 @@ pub fn world_update_system(schedule_builder: &mut legion::systems::Builder) {
 }
 
 pub struct TypeRegistry {
-    world_type_reg: HashMap<u32, Box<dyn WorldType>>,
+    world_type_reg: HashMap<u32, Box<dyn TypeTrait>>,
     next_type_key: u32,
 }
 
@@ -261,7 +255,7 @@ impl TypeRegistry {
         }
     }
 
-    pub fn register_world_type(&mut self, world_type: Box<dyn WorldType>) -> u32 {
+    pub fn register_world_type(&mut self, world_type: Box<dyn TypeTrait>) -> u32 {
         let id = self.get_next_type_key();
         self.world_type_reg.insert(id, world_type);
         id
@@ -273,7 +267,7 @@ impl TypeRegistry {
         out
     }
 
-    pub fn world_type(&self, world_id: u32) -> Result<&dyn WorldType> {
+    pub fn world_type(&self, world_id: u32) -> Result<&dyn TypeTrait> {
         if let Some(world_type) = self.world_type_reg.get(&world_id) {
             Ok(&**world_type)
         } else {
@@ -282,7 +276,7 @@ impl TypeRegistry {
     }
 }
 
-pub trait WorldType: Send + Sync {
+pub trait TypeTrait: Send + Sync {
     fn gen_chunk(
         &self,
         pos: &chunk::Position,
@@ -294,7 +288,7 @@ pub trait WorldType: Send + Sync {
 
 pub struct FlatWorldType {}
 
-impl WorldType for FlatWorldType {
+impl TypeTrait for FlatWorldType {
     #[optick_attr::profile]
     fn gen_chunk(
         &self,
