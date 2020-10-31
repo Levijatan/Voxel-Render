@@ -2,52 +2,64 @@ use super::chunk;
 use super::ticket;
 use super::util;
 use super::voxel;
+use super::chunk::PositionTrait as _;
 
 use anyhow::{anyhow, ensure, Result};
 use bitvec::prelude::*;
-use dashmap::DashMap;
 use log::info;
-use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::{collections::HashMap, cmp::Ordering};
+use building_blocks::{
+    prelude::Get,
+    storage::{
+        chunk_map::{
+            ChunkMap3, LocalChunkCache, ChunkMapReader3
+        },
+        FastLz4
+    }
+};
 
 pub type TypeId = u32;
 pub type Id = legion::Entity;
 
-pub fn new(world_type: TypeId) -> (TypeId, Map, ticket::Arena, ticket::Queue) {
+pub fn new(world_type: TypeId) -> (TypeId, Map, ticket::Arena, ticket::Queue, LocalChunkCache<[i32; 3], voxel::Id, ChunkMeta>) {
     (
         world_type,
         Map::new(),
         ticket::Arena::new(),
         ticket::Queue::new(),
+        LocalChunkCache::new(),
     )
 }
 
 pub struct Map {
-    chunk_map: DashMap<chunk::Position, ChunkMeta>,
+    chunk_map: ChunkMap3<voxel::Id, ChunkMeta>,
 }
 
 impl Map {
     pub fn new() -> Self {
-        Self{ chunk_map: DashMap::new() }
+        let ambient_value = 0;
+        let default_chunk_metadata = ChunkMeta::new();
+        Self{ chunk_map: ChunkMap3::new(chunk::CHUNK_SHAPE, ambient_value, default_chunk_metadata, FastLz4 { level: 10 }) }
     }
     pub fn chunk_is_transparent(
         &self,
         pos: &chunk::Position,
         from_direction: util::Direction,
+        local_cache: &LocalChunkCache<[i32; 3], voxel::Id, ChunkMeta>
     ) -> Option<bool> {
-        let meta = self.chunk_map.get(pos)?;
+        let chunk = self.chunk_map.get_chunk(pos.key(), local_cache)?;
         let to_direction = util::reverse_direction(from_direction);
-        Some(meta.is_transparent(to_direction))
+        Some(chunk.metadata.is_transparent(to_direction))
     }
 
-    pub fn chunk_visibility(&self, pos: &chunk::Position) -> bool {
-        let meta = self.chunk_map.get(pos).unwrap();
-        meta.is_visible()
+    pub fn chunk_visibility(&self, pos: &chunk::Position, local_cache: &LocalChunkCache<[i32; 3], voxel::Id, ChunkMeta>) -> Option<bool> {
+        let chunk = self.chunk_map.get_chunk(pos.key(), local_cache)?;
+        Some(chunk.metadata.is_visible())
     }
 
-    pub fn chunk_set_visible(&self, pos: &chunk::Position, value: bool) {
-        let mut meta = self.chunk_map.get_mut(pos).unwrap();
-        meta.set_visibilty(value);
+    pub fn chunk_set_visible(&self, pos: &chunk::Position, value: bool, reader: &ChunkMapReader3<voxel::Id, ChunkMeta>) {
+        let chunk = reader.get(&pos.key());
+        chunk.metadata.set_visibilty(value);
     }
 
     pub fn chunk_set_transparency(&self, pos: &chunk::Position, value: u8) -> Result<()> {
@@ -131,7 +143,6 @@ pub struct Active {}
 
 #[derive(Debug, Copy, Clone)]
 pub struct ChunkMeta {
-    id: legion::Entity,
     //0-5 transparency, 6 visibility
     visibility: BitArray<LocalBits, [u8; 1]>,
 
@@ -139,9 +150,8 @@ pub struct ChunkMeta {
 }
 
 impl ChunkMeta {
-    fn new(id: legion::Entity) -> Self {
+    fn new() -> Self {
         Self {
-            id,
             visibility: BitArray::new([0; 1]),
             ticket: None,
         }
@@ -300,7 +310,7 @@ impl TypeTrait for FlatWorldType {
             .key_from_string_id(crate::consts::TRANSPARENT_VOXEL)
             .unwrap();
         let opaque_voxel = reg.key_from_string_id(crate::consts::OPAQUE_VOXEL).unwrap();
-        *out = match pos.pos.y.partial_cmp(&0).unwrap() {
+        *out = match pos.y().partial_cmp(&0).unwrap() {
             Ordering::Greater => [transparent_voxel; chunk::VOXELS_IN_CHUNK].into(),
             Ordering::Less => [opaque_voxel; chunk::VOXELS_IN_CHUNK].into(),
             Ordering::Equal => {

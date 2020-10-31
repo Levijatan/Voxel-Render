@@ -9,6 +9,7 @@ use winit::event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEve
 
 use render::chunk::Draw as _;
 use render::light::Draw as _;
+use geom::chunk::PositionTrait as _;
 
 mod clock;
 mod consts;

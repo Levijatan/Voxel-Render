@@ -1,4 +1,5 @@
 use super::chunk;
+use super::chunk::PositionTrait;
 use super::util;
 use super::world;
 
@@ -7,6 +8,7 @@ use thiserror::Error;
 use legion::Entity;
 use std::{collections::VecDeque, sync::RwLock};
 use log::info;
+use building_blocks::prelude::PointN;
 
 pub type Arena = generational_arena::Arena<Ticket>;
 
@@ -16,7 +18,7 @@ pub struct Queue {
 
 impl Queue {
     pub fn new() -> Self {
-        Self{queue: RwLock::new(VecDeque::new())}
+        Self{queue: RwLock::new(VecDeque::<Propagate>::new())}
     }
 
     pub fn pop(&self) -> Option<Propagate> {
@@ -60,9 +62,7 @@ pub fn add(
 ) {
     info!("***Adding Player Ticket***");
     if clock.cur_tick() % 20 == 0 || clock.cur_tick() == 1 {
-        let pos = chunk::Position {
-            pos: glm::vec3(0, 0, 0),
-        };
+        let pos = PointN([0, 0, 0]);
 
         let ticket = Ticket {
             start_time: clock.cur_tick(),
@@ -148,7 +148,7 @@ fn propagate_ticket(
     branch: bool,
     idx: generational_arena::Index,
 ) -> Result<Propagate> {
-    let dir_pos = pos.neighbor(dir)?;
+    let dir_pos = pos.neighbor(dir);
     priority -= 1;
     Ok((Some(dir), dir_pos, priority, branch, idx))
 }

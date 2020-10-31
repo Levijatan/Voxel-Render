@@ -1,5 +1,8 @@
 use anyhow::{anyhow, Result};
 use cached::proc_macro::cached;
+use building_blocks::prelude::{PointN, Point3};
+
+use super::chunk;
 
 #[optick_attr::profile]
 #[cached]
@@ -84,7 +87,7 @@ pub const ALL_DIRECTIONS: [Direction; 6] = [
 ];
 
 #[optick_attr::profile]
-pub fn normals_f32(dir: Direction) -> glm::Vec3 {
+pub fn normals_f32(dir: Direction) -> glm::TVec3<f32> {
     use Direction::{East, West, Up, Down, North, South};
     match dir {
         East => glm::vec3(1.0, 0.0, 0.0),
@@ -97,15 +100,15 @@ pub fn normals_f32(dir: Direction) -> glm::Vec3 {
 }
 
 #[optick_attr::profile]
-pub fn normals_i32(dir: Direction) -> glm::TVec3<i32> {
+pub fn normals_i32(dir: Direction) -> Point3<i32> {
     use Direction::{East, West, Up, Down, North, South};
     match dir {
-        East => glm::vec3(1, 0, 0),
-        West => glm::vec3(-1, 0, 0),
-        Up => glm::vec3(0, 1, 0),
-        Down => glm::vec3(0, -1, 0),
-        North => glm::vec3(0, 0, 1),
-        South => glm::vec3(0, 0, -1),
+        East => PointN([1, 0, 0]),
+        West => PointN([-1, 0, 0]),
+        Up => PointN([0, 1, 0]),
+        Down => PointN([0, -1, 0]),
+        North => PointN([0, 0, 1]),
+        South => PointN([0, 0, -1]),
     }
 }
 
@@ -151,13 +154,5 @@ mod tests {
         assert!((pos.x - 15.0).abs() < f32::EPSILON);
         assert!((pos.y - 1.0).abs() < f32::EPSILON);
         assert!(pos.z == 0.0);
-    }
-
-    #[test]
-    fn test_normals_i32() {
-        let expected_pos = glm::vec3(1, 0, 0);
-        let mut pos = glm::vec3(0, 0, 0);
-        pos += normals_i32(Direction::East);
-        assert_eq!(pos, expected_pos);
     }
 }
