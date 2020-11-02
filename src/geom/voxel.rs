@@ -40,12 +40,13 @@ impl Registry {
         key
     }
 
-    fn attributes(&self, key: Id) -> Attributes {
-            *self.attribute_map.get(&key).unwrap()
+    fn attributes(&self, key: Id) -> Option<Attributes> {
+        self.attribute_map.get(&key).copied()
     }
 
-    pub fn is_transparent(&self, key: Id) -> bool {
-        self.attributes(key).transparent
+    pub fn is_transparent(&self, key: Id) -> Option<bool> {
+        let attr = self.attributes(key)?;
+        Some(attr.transparent)
     }
 
     pub fn key_from_string_id(&self, string_id: &str) -> Option<Id> {
