@@ -206,7 +206,8 @@ pub fn gen_render_instances(
                 }
             }
             if visible {
-                let position = p.f32();
+                let offset = crate::consts::CHUNK_SIZE_F32;
+                let position = (p.f32() * crate::consts::VOXEL_SIZE) - glm::vec3(offset, offset, offset);
                 let rotation = glm::quat_angle_axis(0.0, &glm::Vec3::z_axis().into_inner());
                 out.push(Instance { position, rotation })
             }
