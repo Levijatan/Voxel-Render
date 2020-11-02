@@ -9,6 +9,7 @@ use model::Vertex;
 use std::convert::TryInto;
 use std::ops::Range;
 use std::sync::{Arc, Mutex};
+use building_blocks::storage::chunk_map::LocalChunkCache;
 
 #[optick_attr::profile]
 fn render_area_u32() -> u32 {
@@ -84,7 +85,7 @@ pub fn add_system(schedule_builder: &mut systems::Builder) {
     schedule_builder.add_system(
         SystemBuilder::new("AddChunkRenderComponent")
             .with_query(
-                <(Entity, Read<world::Id>, Read<chunk::Position>, Read<chunk::VisibleVoxels>, Read<chunk::State>)>::query()
+                <(Entity, Read<world::Id>, Read<chunk::Position>, Read<chunk::State>)>::query()
                     .filter(!component::<Component>()),
             )
             .with_query(
@@ -94,19 +95,21 @@ pub fn add_system(schedule_builder: &mut systems::Builder) {
             .read_resource::<crate::clock::Clock>()
             .read_resource::<wgpu::Queue>()
             .read_resource::<State>()
+            .read_resource::<crate::geom::voxel::Registry>()
             .build(
-                move |cmd, ecs, (renderer, clock, queue, chunk_state), (chunk_query, world_query)| {
+                move |cmd, ecs, (renderer, clock, queue, chunk_state, vox_reg), (chunk_query, world_query)| {
                     let (world_ecs, mut chunk_ecs) = ecs.split_for_query(world_query);
-                    world_query.for_each(&world_ecs, |(world_id, world, arena)| {
+                    let cache = LocalChunkCache::new();
+                    world_query.for_each(&world_ecs, |(world_id, map, arena)| {
                         chunk_query
-                            .for_each_mut(&mut chunk_ecs, |(entity, chunk_world_id, pos, visible_voxels, state)| {
+                            .for_each_mut(&mut chunk_ecs, |(entity, chunk_world_id, pos, state)| {
                                 if chunk_world_id == world_id
-                                    && world.chunk_has_ticket(pos, arena)
+                                    && map.chunk_has_ticket(pos, arena, &cache)
                                     && state.ready_for_render()
-                                    && world.chunk_visibility(pos)
+                                    && map.chunk_visibility(pos, &cache)
                                 {
                                     if let Some(offset) = renderer.fetch_offset() {
-                                        let render = chunk::gen_render_instances(visible_voxels, pos);
+                                        let render = chunk::gen_render_instances(pos, map, vox_reg, &cache);
                                         let component = Component {
                                             last_tick_with_ticket: clock.cur_tick(),
                                             ttl: 400,
@@ -137,10 +140,11 @@ pub fn remove_system(schedule_builder: &mut systems::Builder) {
             .build(move |cmd, ecs, (renderer, clock), (chunk_query, world_query)| {
                 optick::event!();
                 let (world_ecs, mut chunk_ecs) = ecs.split_for_query(world_query);
+                let cache = LocalChunkCache::new();
                 world_query.for_each(&world_ecs, |(world_id, world, arena)| {
                     chunk_query.for_each_mut(&mut chunk_ecs, |(entity, chunk_world_id, pos, component)| {
                         if chunk_world_id == world_id {
-                            if world.chunk_has_ticket(pos, arena) {
+                            if world.chunk_has_ticket(pos, arena, &cache) {
                                 component.last_tick_with_ticket = clock.cur_tick();
                             } else if clock.cur_tick() + component.last_tick_with_ticket >= component.ttl {
                                 renderer.return_offset(component.offset).unwrap();

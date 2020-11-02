@@ -1,4 +1,4 @@
-#![warn(clippy::all, clippy::nursery, clippy::pedantic)]
+#![warn(clippy::all)]
 
 extern crate nalgebra_glm as glm;
 
@@ -34,8 +34,6 @@ fn main() -> Result<()> {
 
     let mut chunk_group = storage::GroupDef::new();
     chunk_group.add(storage::ComponentTypeId::of::<geom::chunk::Position>());
-    chunk_group.add(storage::ComponentTypeId::of::<geom::chunk::Voxels>());
-    chunk_group.add(storage::ComponentTypeId::of::<geom::chunk::VisibleVoxels>());
 
     let world_options = WorldOptions {
         groups: vec![chunk_group],
@@ -51,8 +49,8 @@ fn main() -> Result<()> {
     let mut world_type_reg = geom::world::TypeRegistry::new();
     let world_type = world_type_reg.register_world_type(Box::new(geom::world::FlatWorldType {}));
 
-    let (world_type, active_world, arena, queue) = geom::world::new(world_type);
-    ecs.push((world_type, active_world, arena, queue, geom::world::Active {}));
+    let (active_world, arena, queue) = geom::world::new(world_type);
+    ecs.push((active_world, arena, queue, geom::world::Active {}));
 
     let clock = clock::Clock::new();
 
@@ -67,7 +65,6 @@ fn main() -> Result<()> {
     resources.insert(input);
 
     let mut schedule_builder = Schedule::builder();
-
     geom::chunk::system(&mut schedule_builder);
     geom::world::ticket_queue(&mut schedule_builder);
     geom::world::update_system(&mut schedule_builder);
@@ -218,7 +215,7 @@ fn render_system(schedule_builder: &mut legion::systems::Builder) {
                 let chunk_size = consts::CHUNK_SIZE_F32 * consts::VOXEL_SIZE;
                 let half_size = chunk_size / 2.0;
                 chunk_query.for_each(ecs, |(pos, ren)| {
-                    let voxel_pos: glm::Vec3 = (pos.get_f32_pos() * chunk_size)
+                    let voxel_pos: glm::Vec3 = (pos.f32() * chunk_size)
                         - glm::vec3(half_size, half_size, half_size);
                     if camera.cube_in_view(&voxel_pos, half_size) {
                         render_pass.draw_chunk(

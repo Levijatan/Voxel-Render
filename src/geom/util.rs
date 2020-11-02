@@ -1,43 +1,5 @@
 use anyhow::{anyhow, Result};
-use cached::proc_macro::cached;
 use building_blocks::prelude::{PointN, Point3};
-
-use super::chunk;
-
-#[optick_attr::profile]
-#[cached]
-pub fn calc_idx(x: usize, y: usize, z: usize) -> usize {
-    let size = crate::consts::CHUNK_SIZE_USIZE;
-    let out = (y * size * size) + (z * size) + x;
-    assert!(
-        out < size * size * size,
-        "Cannot use larger x:{}, y:{}, z:{} than CHUNK_SIZE:{}",
-        x,
-        y,
-        z,
-        size
-    );
-    out
-}
-
-#[optick_attr::profile]
-pub fn calc_idx_pos(pos: &glm::Vec3) -> usize {
-    let x: usize = pos.x as usize;
-    let y: usize = pos.y as usize;
-    let z: usize = pos.z as usize;
-    calc_idx(x, y, z)
-}
-
-#[optick_attr::profile]
-#[cached]
-pub fn idx_to_pos(idx: usize) -> glm::Vec3 {
-    let size = crate::consts::CHUNK_SIZE_USIZE;
-    let i = idx;
-    let x = i % size;
-    let z = (i % (size * size)) / size;
-    let y = i / (size * size);
-    glm::vec3(x as f32, y as f32, z as f32)
-}
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Direction {
@@ -134,25 +96,5 @@ pub fn go_left(dir: Direction) -> Result<Direction> {
         South => Ok(East),
         East => Ok(North),
         _ => Err(anyhow!("No left in 3 dimensions")),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_calc_idx() {
-        let idx = calc_idx(1, 0, 15);
-        assert_eq!(idx, 241);
-    }
-
-    #[test]
-    fn test_idx_to_pos() {
-        let idx = calc_idx(15, 1, 0);
-        let pos = idx_to_pos(idx);
-        assert!((pos.x - 15.0).abs() < f32::EPSILON);
-        assert!((pos.y - 1.0).abs() < f32::EPSILON);
-        assert!(pos.z == 0.0);
     }
 }
