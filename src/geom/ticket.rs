@@ -1,12 +1,15 @@
 use super::chunk;
+use super::chunk::PositionTrait;
 use super::util;
 use super::world;
+use super::voxel;
 
 use anyhow::{Result, Error};
 use thiserror::Error;
 use legion::Entity;
 use std::{collections::VecDeque, sync::RwLock};
 use log::info;
+use building_blocks::prelude::PointN;
 
 pub type Arena = generational_arena::Arena<Ticket>;
 
@@ -16,7 +19,7 @@ pub struct Queue {
 
 impl Queue {
     pub fn new() -> Self {
-        Self{queue: RwLock::new(VecDeque::new())}
+        Self{queue: RwLock::new(VecDeque::<Propagate>::new())}
     }
 
     pub fn pop(&self) -> Option<Propagate> {
@@ -51,18 +54,17 @@ pub struct Ticket {
 
 //TODO: add player position
 pub fn add(
-    world_id: Entity,
-    world: &world::Map,
+    world: (Entity, &mut world::Map),
     clock: &crate::clock::Clock,
     cmd: &mut legion::systems::CommandBuffer,
     arena: &mut Arena,
     queue: &Queue,
+    world_type_reg: &world::TypeRegistry,
+    voxel_reg: &voxel::Registry,
 ) {
     info!("***Adding Player Ticket***");
     if clock.cur_tick() % 20 == 0 || clock.cur_tick() == 1 {
-        let pos = chunk::Position {
-            pos: glm::vec3(0, 0, 0),
-        };
+        let pos = PointN([0, 0, 0]);
 
         let ticket = Ticket {
             start_time: clock.cur_tick(),
@@ -71,9 +73,29 @@ pub fn add(
         };
 
         info!("Adding {:#?} at {:#?}", ticket, pos);
+        let (world_id, map) = world;
 
-        world.chunk_add(ticket, world_id, &pos, cmd, arena, queue);
+        let chunk = map.chunk_mut(world_id, &pos, cmd, world_type_reg, voxel_reg);
+        if let Some(org_ticket_id) = chunk.metadata.ticket {
+            if let Some(org_ticket) = arena.get_mut(org_ticket_id) {
+                if org_ticket.pos == ticket.pos {
+                    *org_ticket = ticket;
+                } else {
+                    start_ticket(ticket, pos, arena, chunk, queue);
+                }
+            } else {
+                start_ticket(ticket, pos, arena, chunk, queue);
+            }
+        } else {
+            start_ticket(ticket, pos, arena, chunk, queue);
+        }
     }
+}
+
+fn start_ticket(ticket: Ticket, pos: chunk::Position, arena: &mut Arena, chunk: &mut chunk::CType, queue: &Queue) {
+    let ticket_id = arena.insert(ticket);
+    chunk.metadata.ticket = Some(ticket_id);
+    queue.push((None, pos, crate::consts::RENDER_RADIUS, false, ticket_id));
 }
 
 pub fn update(ticket: &Ticket, cur_tick: u64) -> Result<()> {
@@ -148,7 +170,7 @@ fn propagate_ticket(
     branch: bool,
     idx: generational_arena::Index,
 ) -> Result<Propagate> {
-    let dir_pos = pos.neighbor(dir)?;
+    let dir_pos = pos.neighbor(dir);
     priority -= 1;
     Ok((Some(dir), dir_pos, priority, branch, idx))
 }
