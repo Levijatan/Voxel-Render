@@ -52,11 +52,7 @@ impl Map {
     }
 
     pub fn chunk_visibility(&self, pos: &chunk::Position, local_cache: &LocalChunkCache<[i32; 3], voxel::Id, chunk::Meta>) -> bool {
-        if let Some(chunk) = self.chunk_map.get_chunk(pos.key(), local_cache) {
-            chunk.metadata.is_visible()
-        } else {
-            false
-        }
+        self.chunk_map.get_chunk(pos.key(), local_cache).map_or(false, |chunk| chunk.metadata.is_visible())
     }
 
     pub fn chunk_set_visible(&mut self, pos: &chunk::Position, value: bool) {

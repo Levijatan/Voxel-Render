@@ -120,7 +120,7 @@ impl Meta {
         *self.visibility.get(6).unwrap()
     }
 
-    pub fn id(&self) -> Option<Id> {
+    pub const fn id(&self) -> Option<Id> {
         self.id
     }
 
@@ -176,7 +176,7 @@ impl State {
     }
 }
 
-pub fn new(world: world::Id, pos: Position) -> (world::Id, Position, State) {
+pub const fn new(world: world::Id, pos: Position) -> (world::Id, Position, State) {
     let state = State::Gen(SubState::Transparent);
 
     (world, pos, state)
@@ -193,7 +193,7 @@ pub fn gen_render_instances(
     use building_blocks::prelude::Get as _;
     let mut out = Vec::new();
     let extent = map.chunk_map.extent_for_chunk_at_key(&pos.key());
-    let reader = ChunkMapReader3::new(&map.chunk_map, &cache);
+    let reader = ChunkMapReader3::new(&map.chunk_map, cache);
     reader.for_each_ref(&extent, |p, value| {
         if !vox_reg.is_transparent(*value).unwrap() {
             let mut visible = false;
