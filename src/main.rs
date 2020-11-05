@@ -4,12 +4,11 @@ extern crate nalgebra_glm as glm;
 
 use anyhow::Result;
 use futures::executor::block_on;
-use legion::{IntoQuery, Read, Resources, Schedule, World, WorldOptions, storage};
+use legion::{Read, Write, Resources, Schedule, World, WorldOptions, storage, component, IntoQuery};
 use winit::event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent};
 
 use render::chunk::Draw as _;
 use render::light::Draw as _;
-use geom::chunk::PositionTrait as _;
 
 mod clock;
 mod consts;
@@ -49,8 +48,8 @@ fn main() -> Result<()> {
     let mut world_type_reg = geom::world::TypeRegistry::new();
     let world_type = world_type_reg.register_world_type(Box::new(geom::world::FlatWorldType {}));
 
-    let (active_world, arena, queue) = geom::world::new(world_type);
-    ecs.push((active_world, arena, queue, geom::world::Active {}));
+    let (active_world,) = geom::world::new(world_type);
+    ecs.push((active_world, geom::world::Active {}));
 
     let clock = clock::Clock::new();
 
@@ -65,14 +64,9 @@ fn main() -> Result<()> {
     resources.insert(input);
 
     let mut schedule_builder = Schedule::builder();
-    geom::chunk::system(&mut schedule_builder);
-    geom::world::ticket_queue(&mut schedule_builder);
-    geom::world::update_system(&mut schedule_builder);
-    geom::world::add_player_ticket_system(&mut schedule_builder);
+    geom::ticket::systems(&mut schedule_builder);
     update_every_tick_system(&mut schedule_builder);
     render_system(&mut schedule_builder);
-    render::chunk::remove_system(&mut schedule_builder);
-    render::chunk::add_system(&mut schedule_builder);
     update_system(&mut schedule_builder);
     
 
@@ -159,10 +153,8 @@ fn update_system(schedule_builder: &mut legion::systems::Builder) {
 
 fn render_system(schedule_builder: &mut legion::systems::Builder) {
     schedule_builder.add_thread_local(legion::SystemBuilder::new("RenderSystem")
-        .with_query(<(
-            Read<geom::chunk::Position>,
-            Read<render::chunk::Component>,
-        )>::query())
+        .with_query(<(Read<geom::world::Id>, Read<geom::ticket::Ticket>)>::query())
+        .with_query(<(geom::world::Id, Write<geom::world::Map>)>::query().filter(component::<geom::world::Active>()))
         .read_resource::<wgpu::Device>()
         .read_resource::<render::chunk::State>()
         .read_resource::<render::light::State>()
@@ -171,7 +163,7 @@ fn render_system(schedule_builder: &mut legion::systems::Builder) {
         .read_resource::<render::texture::Texture>()
         .write_resource::<wgpu::SwapChain>()
         .write_resource::<wgpu::Queue>()
-        .build(|_, ecs, (device, chunk_state, light_state, uniforms_state, camera, depth_texture, swap_chain, queue), chunk_query| {
+        .build(|_, ecs, (device, chunk_state, light_state, uniforms_state, camera, depth_texture, swap_chain, queue), (ticket_query, world_query)| {
             let frame = swap_chain.get_current_frame().expect("Timeout getting texture").output;
             let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Render Encoder"),
@@ -212,21 +204,28 @@ fn render_system(schedule_builder: &mut legion::systems::Builder) {
 
                 render_pass.set_pipeline(&chunk_state.render_pipeline);
 
-                let chunk_size = consts::CHUNK_SIZE_F32 * consts::VOXEL_SIZE;
-                let half_size = chunk_size / 2.0;
-                chunk_query.for_each(ecs, |(pos, ren)| {
-                    let voxel_pos: glm::Vec3 = (pos.f32() * chunk_size)
-                        - glm::vec3(half_size, half_size, half_size);
-                    if camera.cube_in_view(&voxel_pos, half_size) {
-                        render_pass.draw_chunk(
-                            &chunk_state.voxel_model,
-                            ren.offset..(ren.amount + ren.offset),
-                            &chunk_state.bind_group,
-                            &uniforms_state.bind_group,
-                            &light_state.bind_group,
-                            0,
-                        );
-                    }
+                let (mut world_ecs, ticket_ecs) = ecs.split_for_query(world_query); 
+                world_query.for_each_mut(&mut world_ecs, |(world_id, map)| {
+                    ticket_query.for_each(&ticket_ecs, |(ticket_world_id, ticket)| {
+                        if world_id == ticket_world_id {
+                            for key in map.chunk_map.key_iter(&ticket.extent()) {
+                                if let Some(chunk) = map.chunk_map.get_mut_chunk(key) {
+                                    if chunk.metadata.is_visible() {
+                                        if let Some(offset) = chunk.metadata.render_offset() {
+                                            render_pass.draw_chunk(
+                                                &chunk_state.voxel_model,
+                                                offset..(chunk.metadata.render_amount as u32 + offset),
+                                                &chunk_state.bind_group,
+                                                &uniforms_state.bind_group,
+                                                &light_state.bind_group,
+                                                0,
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    })
                 });
             }
             queue.submit(std::iter::once(encoder.finish()));
