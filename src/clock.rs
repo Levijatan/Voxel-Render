@@ -3,9 +3,11 @@ use std::{time::{Duration, Instant}, sync::{Arc, RwLock}};
 
 use super::consts;
 
+pub type Tick = u64;
+
 pub struct Clock {
-    last_tick: Arc<RwLock<u64>>,
-    cur_tick: u64,
+    last_tick: Arc<RwLock<Tick>>,
+    cur_tick: Tick,
     last_tick_when: Instant,
     last_render: Instant,
     delta: Duration,
@@ -39,11 +41,11 @@ impl Clock {
         }
     }
 
-    pub const fn cur_tick(&self) -> u64 {
+    pub const fn cur_tick(&self) -> Tick {
         self.cur_tick
     }
 
-    pub fn last_tick(&self) -> u64 {
+    pub fn last_tick(&self) -> Tick {
         *self.last_tick.read().unwrap()
     }
 

@@ -98,3 +98,12 @@ pub fn go_left(dir: Direction) -> Result<Direction> {
         _ => Err(anyhow!("No left in 3 dimensions")),
     }
 }
+
+pub fn calc_voxel_idx(x: usize, y: usize, z: usize) -> usize {
+    use crate::consts::CHUNK_SIZE_USIZE;
+    assert!(x < CHUNK_SIZE_USIZE, "x cannot be larger then {}", CHUNK_SIZE_USIZE);
+    assert!(y < CHUNK_SIZE_USIZE, "y cannot be larger then {}", CHUNK_SIZE_USIZE);
+    assert!(z < CHUNK_SIZE_USIZE, "z cannot be larger then {}", CHUNK_SIZE_USIZE);
+    let size = crate::consts::CHUNK_SIZE_USIZE;
+    x + (z * size) + (y * size * size)
+}

@@ -2,19 +2,17 @@ use super::model;
 use super::texture;
 use crate::consts::CHUNK_SIZE_U32;
 use crate::consts::RENDER_RADIUS;
-use crate::geom::{chunk, world, ticket};
 use anyhow::{ensure, Result};
-use legion::{component, systems, Entity, IntoQuery, Read, Write, SystemBuilder};
 use model::Vertex;
 use std::convert::TryInto;
 use std::ops::Range;
-use std::sync::{Arc, Mutex};
-use building_blocks::storage::chunk_map::LocalChunkCache;
+
+pub type BufferOffset = u32;
 
 #[optick_attr::profile]
 fn render_area_u32() -> u32 {
-    let render_radius = RENDER_RADIUS;
-    let render_diameter = render_radius * 2;
+    let render_radius: u32 = RENDER_RADIUS.try_into().unwrap();
+    let render_diameter = (render_radius * 2) + 1;
     render_diameter * render_diameter * render_diameter
 }
 
@@ -39,13 +37,13 @@ fn buffer_offset_u64() -> Result<u64> {
 
 #[derive(Debug, Clone)]
 pub struct Renderer {
-    free_offsets: Arc<Mutex<Vec<u32>>>,
+    free_offsets: Vec<BufferOffset>,
     buffer_offset_multiplier: u32,
 }
 
 impl Renderer {
     pub fn new() -> Self {
-        let free_offsets = Arc::new(Mutex::new((0..render_area_u32()).collect()));
+        let free_offsets = (0..render_area_u32()).collect();
         let buffer_offset_multiplier = buffer_offset_u32();
 
         Self {
@@ -55,106 +53,21 @@ impl Renderer {
     }
 
     #[optick_attr::profile]
-    pub fn fetch_offset(&self) -> Option<u32> {
-        let mut data = self.free_offsets.lock().unwrap();
-        let offset = data.pop()?;
+    pub fn fetch_offset(&mut self) -> Option<BufferOffset> {
+        let offset = self.free_offsets.pop()?;
         Some(offset * self.buffer_offset_multiplier)
     }
 
     #[optick_attr::profile]
-    pub fn return_offset(&self, off: u32) -> Result<()> {
+    pub fn return_offset(&mut self, off: BufferOffset) -> Result<()> {
         let offset = off / self.buffer_offset_multiplier;
-        let mut data = self.free_offsets.lock().unwrap();
         ensure!(
-            !data.contains(&offset),
+            !self.free_offsets.contains(&offset),
             "There cannot exist more than one of an offset"
         );
-        data.push(offset);
+        self.free_offsets.push(offset);
         Ok(())
     }
-}
-
-pub struct Component {
-    last_tick_with_ticket: u64,
-    ttl: u64,
-    pub offset: u32,
-    pub amount: u32,
-}
-
-pub fn add_system(schedule_builder: &mut systems::Builder) {
-    schedule_builder.add_system(
-        SystemBuilder::new("AddChunkRenderComponent")
-            .with_query(
-                <(Entity, Read<world::Id>, Read<chunk::Position>, Read<chunk::State>)>::query()
-                    .filter(!component::<Component>()),
-            )
-            .with_query(
-                <(Entity, Read<world::Map>, Read<ticket::Arena>)>::query().filter(component::<world::Active>()),
-            )
-            .read_resource::<Renderer>()
-            .read_resource::<crate::clock::Clock>()
-            .read_resource::<wgpu::Queue>()
-            .read_resource::<State>()
-            .read_resource::<crate::geom::voxel::Registry>()
-            .build(
-                move |cmd, ecs, (renderer, clock, queue, chunk_state, vox_reg), (chunk_query, world_query)| {
-                    let (world_ecs, mut chunk_ecs) = ecs.split_for_query(world_query);
-                    let cache = LocalChunkCache::new();
-                    world_query.for_each(&world_ecs, |(world_id, map, arena)| {
-                        chunk_query
-                            .for_each_mut(&mut chunk_ecs, |(entity, chunk_world_id, pos, state)| {
-                                if chunk_world_id == world_id
-                                    && map.chunk_has_ticket(pos, arena, &cache)
-                                    && state.ready_for_render()
-                                    && map.chunk_visibility(pos, &cache)
-                                {
-                                    if let Some(offset) = renderer.fetch_offset() {
-                                        let render = chunk::gen_render_instances(pos, map, vox_reg, &cache);
-                                        let component = Component {
-                                            last_tick_with_ticket: clock.cur_tick(),
-                                            ttl: 400,
-                                            offset,
-                                            amount: render.len() as u32,
-                                        };
-
-                                        super::state::set_instance_buffer(queue, chunk_state, &render, offset as u64);
-                                        cmd.add_component(*entity, component);
-                                    }
-                                }
-                            })
-                    });
-                },
-            ),
-    );
-}
-
-pub fn remove_system(schedule_builder: &mut systems::Builder) {
-    schedule_builder.add_system(
-        SystemBuilder::new("RemoveChunkRenderSystem")
-            .with_query(
-                <(Entity, Read<world::Id>, Read<chunk::Position>, Write<Component>)>::query(),
-            )
-            .with_query( <(Entity, Read<world::Map>, Read<ticket::Arena>)>::query().filter(component::<world::Active>()))
-            .write_resource::<Renderer>()
-            .read_resource::<crate::clock::Clock>()
-            .build(move |cmd, ecs, (renderer, clock), (chunk_query, world_query)| {
-                optick::event!();
-                let (world_ecs, mut chunk_ecs) = ecs.split_for_query(world_query);
-                let cache = LocalChunkCache::new();
-                world_query.for_each(&world_ecs, |(world_id, world, arena)| {
-                    chunk_query.for_each_mut(&mut chunk_ecs, |(entity, chunk_world_id, pos, component)| {
-                        if chunk_world_id == world_id {
-                            if world.chunk_has_ticket(pos, arena, &cache) {
-                                component.last_tick_with_ticket = clock.cur_tick();
-                            } else if clock.cur_tick() + component.last_tick_with_ticket >= component.ttl {
-                                renderer.return_offset(component.offset).unwrap();
-                                cmd.remove_component::<Component>(*entity);
-                            }
-                        }
-                    });
-                });
-            }),
-    );
 }
 
 pub struct State {
