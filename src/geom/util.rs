@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+
 use building_blocks::prelude::{PointN, Point3};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -84,18 +84,6 @@ pub fn reverse_direction(dir: Direction) -> Direction {
         Down => Up,
         North => South,
         South => North,
-    }
-}
-
-pub fn go_left(dir: Direction) -> Result<Direction> {
-    use Direction::{East, West, North, South};
-
-    match dir {
-        North => Ok(West),
-        West => Ok(South),
-        South => Ok(East),
-        East => Ok(North),
-        _ => Err(anyhow!("No left in 3 dimensions")),
     }
 }
 

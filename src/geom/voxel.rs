@@ -1,10 +1,21 @@
 use std::collections::HashMap;
+use building_blocks::core::Point3;
 
 pub type Id = u16;
+pub type Position = Point3<i32>;
 
 #[derive(Debug, Copy, Clone)]
 pub struct Attributes {
     transparent: bool,
+}
+
+pub fn calc_pos(pos: Position) -> glm::Vec3 {
+    let offset = crate::consts::CHUNK_SIZE_F32;
+    (glm::vec3(pos.x()  as f32, pos.y() as f32, pos.z() as f32) * crate::consts::VOXEL_SIZE) - glm::vec3(offset, offset, offset)
+}
+
+pub fn rotation() -> glm::Qua<f32> {
+    glm::quat_angle_axis(0.0, &glm::Vec3::z_axis().into_inner())
 }
 
 pub struct Registry {

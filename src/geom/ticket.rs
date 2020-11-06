@@ -33,11 +33,11 @@ impl Ticket {
         }
     }
 
-    pub fn done_propagating(&self) -> bool {
+    pub const fn done_propagating(&self) -> bool {
         self.cur_radius == self.max_radius
     }
 
-    pub fn extent(&self) -> chunk::Extent {
+    pub const fn extent(&self) -> chunk::Extent {
         self.extent
     }
 }
@@ -143,18 +143,19 @@ fn render_system(schedule_builder: &mut legion::systems::Builder) {
                                         info!("Loading chunk to gpu: {:#?}", chunk.metadata);
                                         if let Some(render_offset) = chunk_renderer.fetch_offset() {
                                             cnt += 1;
-                                            let rotation: glm::Qua<f32> = glm::quat_angle_axis(0.0, &glm::Vec3::z_axis().into_inner());
                                             let mut instances = Vec::new();
-                                            chunk.map.for_each_mut(&extent, |point: chunk::Position, value| {
-                                                if !vox_reg.is_transparent(*value).unwrap() {
-                                                    let offset = crate::consts::CHUNK_SIZE_F32;
-                                                    let position = (point.f32() * crate::consts::VOXEL_SIZE) - glm::vec3(offset, offset, offset);
+                                            let c_map = &mut chunk.map;
+                                            let c_meta = &mut chunk.metadata;
+                                            c_map.for_each_mut(&extent, |point: chunk::Position, value| {
+                                                if c_meta.voxel_is_visible(point-key) && !vox_reg.is_transparent(*value).unwrap() {
+                                                    let rotation = voxel::rotation();
+                                                    let position = voxel::calc_pos(point);
                                                     instances.push(Instance{position, rotation})
                                                 }
                                             });
                                             crate::render::state::set_instance_buffer(render_queue, chunk_state, &instances, render_offset as u64);
-                                            chunk.metadata.set_render_offset(Some(render_offset));
-                                            chunk.metadata.render_amount = instances.len() as u16;
+                                            c_meta.set_render_offset(Some(render_offset));
+                                            c_meta.render_amount = instances.len() as u16;
                                         }
                                     }
                                 }

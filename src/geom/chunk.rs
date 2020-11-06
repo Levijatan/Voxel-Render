@@ -119,6 +119,11 @@ impl Meta {
         self.voxel_visibility[range].set_all(value);
     }
 
+    pub fn voxel_is_visible(&self, p: voxel::Position) -> bool {
+        let idx = util::calc_voxel_idx(p.x() as usize, p.y() as usize, p.z() as usize);
+        *self.voxel_visibility.get(idx).unwrap()
+    }
+
     pub fn has_render_offset(&self) -> bool {
         self.render_offset.is_some()
     }
@@ -130,4 +135,16 @@ impl Meta {
     pub fn render_offset(&self) -> Option<crate::render::chunk::BufferOffset> {
         self.render_offset
     }
+}
+
+pub fn calc_center_point(pos: Position) -> glm::Vec3 {
+    let offset = crate::consts::CHUNK_SIZE_F32;
+    let mut pos_f32 = glm::vec3(pos.x() as f32, pos.y() as f32, pos.z() as f32);
+    pos_f32 *= crate::consts::VOXEL_SIZE;
+    pos_f32 -= glm::vec3(offset, offset, offset);
+    pos_f32 + glm::vec3(offset/2.0, offset/2.0, offset/2.0)
+}
+
+pub fn calc_radius() -> f32 {
+    (crate::consts::CHUNK_SIZE_F32*crate::consts::VOXEL_SIZE)/2.0
 }

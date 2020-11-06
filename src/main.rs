@@ -212,14 +212,15 @@ fn render_system(schedule_builder: &mut legion::systems::Builder) {
                                 if let Some(chunk) = map.chunk_map.get_mut_chunk(key) {
                                     if chunk.metadata.is_visible() {
                                         if let Some(offset) = chunk.metadata.render_offset() {
-                                            render_pass.draw_chunk(
-                                                &chunk_state.voxel_model,
-                                                offset..(chunk.metadata.render_amount as u32 + offset),
-                                                &chunk_state.bind_group,
-                                                &uniforms_state.bind_group,
-                                                &light_state.bind_group,
-                                                0,
-                                            );
+                                            if camera.cube_in_view(&geom::chunk::calc_center_point(key), geom::chunk::calc_radius()) {
+                                                render_pass.draw_chunk(
+                                                    &chunk_state.voxel_model,
+                                                    offset..(chunk.metadata.render_amount as u32 + offset),
+                                                    &chunk_state.bind_group,
+                                                    &uniforms_state.bind_group,
+                                                    &light_state.bind_group,
+                                                );
+                                            }
                                         }
                                     }
                                 }

@@ -140,7 +140,7 @@ impl State {
                 binding: 0,
                 visibility: wgpu::ShaderStage::VERTEX,
                 ty: wgpu::BindingType::StorageBuffer {
-                    dynamic: true,
+                    dynamic: false,
                     readonly: true,
                     min_binding_size: None,
                 },
@@ -209,7 +209,6 @@ where
         chunk: &'b wgpu::BindGroup,
         uniforms: &'b wgpu::BindGroup,
         light: &'b wgpu::BindGroup,
-        offset: u32,
     );
     fn draw_mesh_instanced(
         &mut self,
@@ -219,7 +218,6 @@ where
         chunk: &'b wgpu::BindGroup,
         uniforms: &'b wgpu::BindGroup,
         light: &'b wgpu::BindGroup,
-        offset: u32,
     );
 
     fn draw_model(
@@ -228,7 +226,6 @@ where
         chunk: &'b wgpu::BindGroup,
         uniforms: &'b wgpu::BindGroup,
         light: &'b wgpu::BindGroup,
-        offset: u32,
     );
     fn draw_model_instanced(
         &mut self,
@@ -237,7 +234,6 @@ where
         chunk: &'b wgpu::BindGroup,
         uniforms: &'b wgpu::BindGroup,
         light: &'b wgpu::BindGroup,
-        offset: u32,
     );
     fn draw_model_instanced_with_material(
         &mut self,
@@ -247,7 +243,6 @@ where
         chunk: &'b wgpu::BindGroup,
         uniforms: &'b wgpu::BindGroup,
         light: &'b wgpu::BindGroup,
-        offset: u32,
     );
     fn draw_chunk(
         &mut self,
@@ -256,7 +251,6 @@ where
         chunk: &'b wgpu::BindGroup,
         uniforms: &'b wgpu::BindGroup,
         light: &'b wgpu::BindGroup,
-        offset: u32,
     );
 }
 
@@ -272,9 +266,8 @@ where
         chunk: &'b wgpu::BindGroup,
         uniforms: &'b wgpu::BindGroup,
         light: &'b wgpu::BindGroup,
-        offset: u32,
     ) {
-        self.draw_mesh_instanced(mesh, material, 0..1, chunk, uniforms, light, offset);
+        self.draw_mesh_instanced(mesh, material, 0..1, chunk, uniforms, light);
     }
 
     #[optick_attr::profile]
@@ -286,13 +279,12 @@ where
         chunk: &'b wgpu::BindGroup,
         uniforms: &'b wgpu::BindGroup,
         light: &'b wgpu::BindGroup,
-        offset: u32,
     ) {
         self.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
         self.set_index_buffer(mesh.index_buffer.slice(..));
         self.set_bind_group(0, &material.bind_group, &[]);
         self.set_bind_group(1, uniforms, &[]);
-        self.set_bind_group(2, chunk, &[offset]);
+        self.set_bind_group(2, chunk, &[]);
         self.set_bind_group(3, light, &[]);
         self.draw_indexed(0..mesh.num_elements, 0, instances);
     }
@@ -304,9 +296,8 @@ where
         chunk: &'b wgpu::BindGroup,
         uniforms: &'b wgpu::BindGroup,
         light: &'b wgpu::BindGroup,
-        offset: u32,
     ) {
-        self.draw_model_instanced(model, 0..1, chunk, uniforms, light, offset);
+        self.draw_model_instanced(model, 0..1, chunk, uniforms, light);
     }
 
     #[optick_attr::profile]
@@ -317,7 +308,6 @@ where
         chunk: &'b wgpu::BindGroup,
         uniforms: &'b wgpu::BindGroup,
         light: &'b wgpu::BindGroup,
-        offset: u32,
     ) {
         for mesh in &model.meshes {
             let material = &model.materials[mesh.material];
@@ -328,7 +318,6 @@ where
                 chunk,
                 uniforms,
                 light,
-                offset,
             );
         }
     }
@@ -342,7 +331,6 @@ where
         chunk: &'b wgpu::BindGroup,
         uniforms: &'b wgpu::BindGroup,
         light: &'b wgpu::BindGroup,
-        offset: u32,
     ) {
         for mesh in &model.meshes {
             self.draw_mesh_instanced(
@@ -352,7 +340,6 @@ where
                 chunk,
                 uniforms,
                 light,
-                offset,
             );
         }
     }
@@ -365,8 +352,7 @@ where
         chunk: &'b wgpu::BindGroup,
         uniforms: &'b wgpu::BindGroup,
         light: &'b wgpu::BindGroup,
-        offset: u32,
     ) {
-        self.draw_model_instanced(model, instances, chunk, uniforms, light, offset);
+        self.draw_model_instanced(model, instances, chunk, uniforms, light);
     }
 }

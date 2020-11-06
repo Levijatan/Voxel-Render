@@ -32,7 +32,7 @@ impl Map {
         Self{ type_id, chunk_map: ChunkMap3::new(chunk::CHUNK_SHAPE, ambient_value, default_chunk_metadata, FastLz4 { level: 10 }) }
     }
 
-    pub fn type_id(&self) -> TypeId {
+    pub const fn type_id(&self) -> TypeId {
         self.type_id
     }
 }
