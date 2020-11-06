@@ -14,37 +14,39 @@ use building_blocks::{
 pub type TypeId = u32;
 pub type Id = legion::Entity;
 
-pub fn new(world_type: TypeId) -> (Map,) {
-    (
-        Map::new(world_type),
-    )
-}
-
-pub struct Map {
-    pub chunk_map: ChunkMap3<voxel::Id, chunk::Meta>,
+pub struct Map<T> 
+    where T: Copy + Clone
+{
+    pub chunk_map: ChunkMap3<voxel::Id, chunk::Meta<T>>,
     type_id: TypeId,
 }
 
-impl Map {
+impl<T> Map<T> 
+    where T: Copy + Clone
+{
     pub fn new(type_id: TypeId) -> Self {
         let ambient_value = 1;
-        let default_chunk_metadata = chunk::Meta::new();
+        let default_chunk_metadata = chunk::Meta::<T>::new();
         Self{ type_id, chunk_map: ChunkMap3::new(chunk::CHUNK_SHAPE, ambient_value, default_chunk_metadata, FastLz4 { level: 10 }) }
     }
 
-    pub const fn type_id(&self) -> TypeId {
+    pub fn type_id(&self) -> TypeId {
         self.type_id
     }
+
+    pub fn create(world_type: TypeId) -> (Self,) {
+        (Self::new(world_type),)
+    } 
 }
 
 pub struct Active {}
 
-pub struct TypeRegistry {
-    world_type_reg: HashMap<u32, Box<dyn TypeTrait>>,
+pub struct TypeRegistry<T> {
+    world_type_reg: HashMap<u32, Box<dyn TypeTrait<T>>>,
     next_type_key: u32,
 }
 
-impl TypeRegistry {
+impl<T> TypeRegistry<T> {
     pub fn new() -> Self {
         Self {
             world_type_reg: HashMap::new(),
@@ -52,7 +54,7 @@ impl TypeRegistry {
         }
     }
 
-    pub fn register_world_type(&mut self, world_type: Box<dyn TypeTrait>) -> u32 {
+    pub fn register_world_type(&mut self, world_type: Box<dyn TypeTrait<T>>) -> u32 {
         let id = self.get_next_type_key();
         self.world_type_reg.insert(id, world_type);
         id
@@ -64,7 +66,7 @@ impl TypeRegistry {
         out
     }
 
-    pub fn world_type(&self, world_id: u32) -> Result<&dyn TypeTrait> {
+    pub fn world_type(&self, world_id: u32) -> Result<&dyn TypeTrait<T>> {
         if let Some(world_type) = self.world_type_reg.get(&world_id) {
             Ok(&**world_type)
         } else {
@@ -73,29 +75,32 @@ impl TypeRegistry {
     }
 }
 
-pub trait TypeTrait: Send + Sync {
+pub trait TypeTrait<T>: Send + Sync 
+    where T: Copy + Clone
+{
     fn gen_chunk(
         &self,
         pos: &chunk::Position,
         extent: &chunk::Extent,
         vox_reg: &voxel::Registry,
-    ) -> chunk::CType;
+    ) -> chunk::CType<T>;
     fn world_type(&self) -> &'static str;
 }
 
 pub struct FlatWorldType {}
 
-impl TypeTrait for FlatWorldType {
-    #[optick_attr::profile]
+impl<T> TypeTrait<T> for FlatWorldType 
+    where T: Copy + Clone
+{
     fn gen_chunk(
         &self,
         pos: &chunk::Position,
         extent: &chunk::Extent,
         vox_reg: &voxel::Registry,
-    ) -> chunk::CType {
-        let transparent_voxel = vox_reg.key_from_string_id(crate::consts::TRANSPARENT_VOXEL).unwrap();
-        let opaque_voxel = vox_reg.key_from_string_id(crate::consts::OPAQUE_VOXEL).unwrap();
-        let mut meta = chunk::Meta::new();
+    ) -> chunk::CType<T> {
+        let transparent_voxel = vox_reg.key_from_string_id(voxel::TRANSPARENT_VOXEL).unwrap();
+        let opaque_voxel = vox_reg.key_from_string_id(voxel::OPAQUE_VOXEL).unwrap();
+        let mut meta = chunk::Meta::<T>::new();
         let map = match pos.y().partial_cmp(&0).unwrap() {
             Ordering::Greater => {
                 meta.set_visibilty(true);
@@ -106,7 +111,7 @@ impl TypeTrait for FlatWorldType {
             Ordering::Equal => {
                 meta.set_visibilty(true);
                 meta.set_transparency(31);
-                meta.voxel_set_range(0..(crate::consts::CHUNK_SIZE_USIZE*crate::consts::CHUNK_SIZE_USIZE), true);
+                meta.voxel_set_range(0..(chunk::CHUNK_SIZE_USIZE*chunk::CHUNK_SIZE_USIZE), true);
                 Array3::fill_with(*extent, |pos| {
                     if pos.y() == 0 {
                         opaque_voxel

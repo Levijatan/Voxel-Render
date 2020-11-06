@@ -1,7 +1,8 @@
 use log::info;
 use std::{time::{Duration, Instant}, sync::{Arc, RwLock}};
 
-use super::consts;
+pub const TICK_PER_SEC: f32 = 20.0;
+pub const TICK_STEP: f32 = 1.0 / TICK_PER_SEC;
 
 pub type Tick = u64;
 
@@ -23,14 +24,14 @@ impl Clock {
             delta: Duration::default(),
         }
     }
-    #[optick_attr::profile]
+
     pub fn tick(&mut self) {
         let now = Instant::now();
 
         self.delta = now.duration_since(self.last_render);
         self.last_render = now;
         let step = now.duration_since(self.last_tick_when);
-        if step.as_secs_f32() >= consts::TICK_STEP {
+        if step.as_secs_f32() >= TICK_STEP {
             self.last_tick_when = now;
             self.cur_tick += 1;
             info!(
@@ -51,6 +52,10 @@ impl Clock {
 
     pub const fn delta(&self) -> std::time::Duration {
         self.delta
+    }
+
+    pub fn do_tick(&self) -> bool {
+        self.cur_tick() > self.last_tick()
     }
 
     pub fn tick_done(&self) {

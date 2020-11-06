@@ -12,7 +12,6 @@ pub struct Instance {
 }
 
 impl Instance {
-    #[optick_attr::profile]
     pub fn to_raw(&self) -> InstanceRaw {
         InstanceRaw {
             model: glm::translate(&glm::quat_to_mat4(&self.rotation), &self.position),
@@ -29,7 +28,6 @@ pub struct InstanceRaw {
 unsafe impl bytemuck::Pod for InstanceRaw {}
 unsafe impl bytemuck::Zeroable for InstanceRaw {}
 
-#[optick_attr::profile]
 pub fn create_render_pipeline(
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,
@@ -86,7 +84,7 @@ pub fn create_render_pipeline(
 
 
 
-pub async fn new(window: &winit::window::Window, resource: &mut legion::Resources) {
+pub async fn new(window: &winit::window::Window, resource: &mut legion::Resources, chunk_size: u32, render_radius: u32) {
     let size = window.inner_size();
 
     // The instance is a handle to our GPU
@@ -141,6 +139,8 @@ pub async fn new(window: &winit::window::Window, resource: &mut legion::Resource
         &light_bind_group_layout,
         &uniform_bind_group_layout,
         &queue,
+        chunk_size,
+        render_radius
     ).unwrap();
 
     let depth_texture =

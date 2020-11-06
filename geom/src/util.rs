@@ -1,5 +1,6 @@
 
 use building_blocks::prelude::{PointN, Point3};
+use super::chunk;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Direction {
@@ -48,7 +49,6 @@ pub const ALL_DIRECTIONS: [Direction; 6] = [
     Direction::South,
 ];
 
-#[optick_attr::profile]
 pub fn normals_f32(dir: Direction) -> glm::TVec3<f32> {
     use Direction::{East, West, Up, Down, North, South};
     match dir {
@@ -61,7 +61,6 @@ pub fn normals_f32(dir: Direction) -> glm::TVec3<f32> {
     }
 }
 
-#[optick_attr::profile]
 pub fn normals_i32(dir: Direction) -> Point3<i32> {
     use Direction::{East, West, Up, Down, North, South};
     match dir {
@@ -74,7 +73,6 @@ pub fn normals_i32(dir: Direction) -> Point3<i32> {
     }
 }
 
-#[optick_attr::profile]
 pub fn reverse_direction(dir: Direction) -> Direction {
     use Direction::{East, West, Up, Down, North, South};
     match dir {
@@ -88,10 +86,11 @@ pub fn reverse_direction(dir: Direction) -> Direction {
 }
 
 pub fn calc_voxel_idx(x: usize, y: usize, z: usize) -> usize {
-    use crate::consts::CHUNK_SIZE_USIZE;
-    assert!(x < CHUNK_SIZE_USIZE, "x cannot be larger then {}", CHUNK_SIZE_USIZE);
-    assert!(y < CHUNK_SIZE_USIZE, "y cannot be larger then {}", CHUNK_SIZE_USIZE);
-    assert!(z < CHUNK_SIZE_USIZE, "z cannot be larger then {}", CHUNK_SIZE_USIZE);
-    let size = crate::consts::CHUNK_SIZE_USIZE;
+    use chunk::CHUNK_SIZE_USIZE;
+    let size = CHUNK_SIZE_USIZE;
+    assert!(x < size, "x cannot be larger then {}", size);
+    assert!(y < size, "y cannot be larger then {}", size);
+    assert!(z < size, "z cannot be larger then {}", size);
+    
     x + (z * size) + (y * size * size)
 }

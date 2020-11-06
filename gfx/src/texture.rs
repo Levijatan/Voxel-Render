@@ -9,7 +9,6 @@ pub struct Texture {
 impl Texture {
     pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
-    #[optick_attr::profile]
     pub fn load<P: AsRef<std::path::Path>>(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -24,8 +23,6 @@ impl Texture {
         Self::from_image(device, queue, &img, label, is_normal_map)
     }
 
-    #[optick_attr::profile]
-    #[allow(dead_code)]
     pub fn from_bytes(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -37,7 +34,6 @@ impl Texture {
         Self::from_image(device, queue, &img, Some(label), is_normal_map)
     }
 
-    #[optick_attr::profile]
     pub fn from_image(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -105,7 +101,6 @@ impl Texture {
         })
     }
 
-    #[optick_attr::profile]
     pub fn create_depth_texture(
         device: &wgpu::Device,
         sc_desc: &wgpu::SwapChainDescriptor,

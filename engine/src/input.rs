@@ -1,4 +1,4 @@
-use crate::render::camera;
+use gfx::camera;
 use winit::{dpi::PhysicalPosition, event::{ElementState, KeyboardInput, MouseButton, WindowEvent}};
 
 pub struct State {
@@ -16,7 +16,6 @@ impl State {
         }
     }
 
-    #[optick_attr::profile]
     pub fn input(&mut self, event: &WindowEvent) -> bool {
         match event {
             WindowEvent::KeyboardInput {

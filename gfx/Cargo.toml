@@ -1,0 +1,25 @@
+[package]
+name = "gfx"
+version = "0.1.0"
+authors = ["Levijatan <aasmunjr@uio.no>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+nalgebra-glm = "0.9.0"
+winit = "0.23.0"
+anyhow = "1.0"
+wgpu = "0.6"
+bytemuck = "1.4"
+rayon = "1.5.0"
+legion = "0.3.1"
+image = "0.23.11"
+tobj = "2.0.2"
+
+[build-dependencies]
+anyhow = "1.0"
+fs_extra = "1.2.0"
+glob = "0.3"
+rayon = "1.5.0"
+shaderc = "0.6"

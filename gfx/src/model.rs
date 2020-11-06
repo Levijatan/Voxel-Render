@@ -23,7 +23,6 @@ unsafe impl bytemuck::Zeroable for MVertex {}
 unsafe impl bytemuck::Pod for MVertex {}
 
 impl Vertex for MVertex {
-    #[optick_attr::profile]
     fn desc<'a>() -> wgpu::VertexBufferDescriptor<'a> {
         use std::mem;
         wgpu::VertexBufferDescriptor {
@@ -68,7 +67,6 @@ pub struct Material {
 }
 
 impl Material {
-    #[optick_attr::profile]
     pub fn new(
         device: &wgpu::Device,
         name: &str,
@@ -122,7 +120,6 @@ pub struct Model {
 }
 
 impl Model {
-    #[optick_attr::profile]
     pub fn load<P: AsRef<std::path::Path>>(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -317,7 +314,6 @@ impl<'a, 'b> Draw<'a, 'b> for wgpu::RenderPass<'a>
 where
     'b: 'a,
 {
-    #[optick_attr::profile]
     fn draw_mesh(
         &mut self,
         mesh: &'b Mesh,
@@ -328,7 +324,6 @@ where
         self.draw_mesh_instanced(mesh, material, 0..1, uniforms, light);
     }
 
-    #[optick_attr::profile]
     fn draw_mesh_instanced(
         &mut self,
         mesh: &'b Mesh,
@@ -345,7 +340,6 @@ where
         self.draw_indexed(0..mesh.num_elements, 0, instances);
     }
 
-    #[optick_attr::profile]
     fn draw_model(
         &mut self,
         model: &'b Model,
@@ -355,7 +349,6 @@ where
         self.draw_model_instanced(model, 0..1, uniforms, light);
     }
 
-    #[optick_attr::profile]
     fn draw_model_instanced(
         &mut self,
         model: &'b Model,
@@ -369,7 +362,6 @@ where
         }
     }
 
-    #[optick_attr::profile]
     fn draw_model_instanced_with_material(
         &mut self,
         model: &'b Model,

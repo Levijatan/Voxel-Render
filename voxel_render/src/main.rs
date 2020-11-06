@@ -7,17 +7,14 @@ use futures::executor::block_on;
 use legion::{Read, Write, Resources, Schedule, World, WorldOptions, storage, component, IntoQuery};
 use winit::event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent};
 
-use render::chunk::Draw as _;
-use render::light::Draw as _;
+use gfx::chunk::Draw as _;
+use gfx::light::Draw as _;
 
-mod clock;
 mod consts;
-mod geom;
-mod input;
-mod render;
+use engine::{input, clock, ticket};
+use geom::{voxel, chunk};
 
 fn main() -> Result<()> {
-    optick::start_capture();
     env_logger::init();
     let event_loop = winit::event_loop::EventLoop::new();
     let title = env!("CARGO_PKG_NAME");
@@ -42,20 +39,20 @@ fn main() -> Result<()> {
     let mut resources = Resources::default();
 
     let mut voxreg = geom::voxel::Registry::new();
-    voxreg.register_voxel_type(consts::OPAQUE_VOXEL, false);
-    voxreg.register_voxel_type(consts::TRANSPARENT_VOXEL, true);
+    voxreg.register_voxel_type(voxel::OPAQUE_VOXEL, false);
+    voxreg.register_voxel_type(voxel::TRANSPARENT_VOXEL, true);
 
-    let mut world_type_reg = geom::world::TypeRegistry::new();
+    let mut world_type_reg = geom::world::TypeRegistry::<gfx::chunk::BufferOffset>::new();
     let world_type = world_type_reg.register_world_type(Box::new(geom::world::FlatWorldType {}));
 
-    let (active_world,) = geom::world::new(world_type);
+    let (active_world,) = geom::world::Map::<gfx::chunk::BufferOffset>::create(world_type);
     ecs.push((active_world, geom::world::Active {}));
 
     let clock = clock::Clock::new();
 
-    block_on(render::state::new(&window, &mut resources));
+    block_on(gfx::state::new(&window, &mut resources, chunk::CHUNK_SIZE_U32, consts::RENDER_RADIUS as u32));
 
-    let chunk_renderer = render::chunk::Renderer::new();
+    let chunk_renderer = gfx::chunk::Renderer::new(consts::RENDER_RADIUS as u32);
 
     resources.insert(voxreg);
     resources.insert(world_type_reg);
@@ -64,7 +61,7 @@ fn main() -> Result<()> {
     resources.insert(input);
 
     let mut schedule_builder = Schedule::builder();
-    geom::ticket::systems(&mut schedule_builder);
+    ticket::Ticket::systems(&mut schedule_builder, consts::RENDER_RADIUS);
     update_every_tick_system(&mut schedule_builder);
     render_system(&mut schedule_builder);
     update_system(&mut schedule_builder);
@@ -85,7 +82,6 @@ fn main() -> Result<()> {
                 if !input.input(event) {
                     match event {
                         WindowEvent::CloseRequested => {
-                            optick::stop_capture("Voxel_Render");
                             *control_flow = ControlFlow::Exit;
                         }
                         WindowEvent::KeyboardInput { input, .. } => match input {
@@ -94,25 +90,23 @@ fn main() -> Result<()> {
                                 virtual_keycode: Some(VirtualKeyCode::Escape),
                                 ..
                             } => {
-                                optick::stop_capture("Voxel_Render");
                                 *control_flow = ControlFlow::Exit;
                             }
                             _ => {}
                         },
                         WindowEvent::Resized(physical_size) => {
                             drop(input);
-                            render::state::resize(*physical_size, &mut resources);
+                            gfx::state::resize(*physical_size, &mut resources);
                         }
                         WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
                             drop(input);
-                            render::state::resize(**new_inner_size, &mut resources);
+                            gfx::state::resize(**new_inner_size, &mut resources);
                         }
                         _ => {}
                     }
                 }
             }
             Event::RedrawRequested(_) => {
-                optick::next_frame();
 
                 schedule.execute(&mut ecs, &mut resources);
 
@@ -136,11 +130,11 @@ fn update_every_tick_system(schedule_builder: &mut legion::systems::Builder) {
 fn update_system(schedule_builder: &mut legion::systems::Builder) {
     schedule_builder.add_system(legion::SystemBuilder::new("UpdateSystem")
         .write_resource::<clock::Clock>()
-        .write_resource::<render::uniforms::State>()
-        .write_resource::<render::light::State>()
+        .write_resource::<gfx::uniforms::State>()
+        .write_resource::<gfx::light::State>()
         .write_resource::<input::State>()
         .write_resource::<wgpu::Queue>()
-        .write_resource::<render::camera::Camera>()
+        .write_resource::<gfx::camera::Camera>()
         .build(|_, _, (clock, uniform, light, input, queue, camera), _| {
             clock.tick();
             let dt = clock.delta();
@@ -153,14 +147,14 @@ fn update_system(schedule_builder: &mut legion::systems::Builder) {
 
 fn render_system(schedule_builder: &mut legion::systems::Builder) {
     schedule_builder.add_thread_local(legion::SystemBuilder::new("RenderSystem")
-        .with_query(<(Read<geom::world::Id>, Read<geom::ticket::Ticket>)>::query())
-        .with_query(<(geom::world::Id, Write<geom::world::Map>)>::query().filter(component::<geom::world::Active>()))
+        .with_query(<(Read<geom::world::Id>, Read<ticket::Ticket>)>::query())
+        .with_query(<(geom::world::Id, Write<geom::world::Map<gfx::chunk::BufferOffset>>)>::query().filter(component::<geom::world::Active>()))
         .read_resource::<wgpu::Device>()
-        .read_resource::<render::chunk::State>()
-        .read_resource::<render::light::State>()
-        .read_resource::<render::uniforms::State>()
-        .read_resource::<render::camera::Camera>()
-        .read_resource::<render::texture::Texture>()
+        .read_resource::<gfx::chunk::State>()
+        .read_resource::<gfx::light::State>()
+        .read_resource::<gfx::uniforms::State>()
+        .read_resource::<gfx::camera::Camera>()
+        .read_resource::<gfx::texture::Texture>()
         .write_resource::<wgpu::SwapChain>()
         .write_resource::<wgpu::Queue>()
         .build(|_, ecs, (device, chunk_state, light_state, uniforms_state, camera, depth_texture, swap_chain, queue), (ticket_query, world_query)| {

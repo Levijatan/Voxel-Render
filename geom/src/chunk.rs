@@ -7,14 +7,18 @@ use std::ops::Range;
 
 use super::util;
 use super::voxel;
-use crate::consts::{CHUNK_SIZE_I32, CHUNK_SIZE_USIZE};
+
+pub const CHUNK_SIZE_F32: f32 = 16.0;
+pub const CHUNK_SIZE_U32: u32 = CHUNK_SIZE_F32 as u32;
+pub const CHUNK_SIZE_I32: i32 = CHUNK_SIZE_F32 as i32;
+pub const CHUNK_SIZE_USIZE: usize = CHUNK_SIZE_F32 as usize;
 
 pub const CHUNK_SHAPE: Point3<i32> = PointN([CHUNK_SIZE_I32; 3]);
 pub const VOXELS_IN_CHUNK: usize = CHUNK_SIZE_USIZE * CHUNK_SIZE_USIZE * CHUNK_SIZE_USIZE;
 
 pub type Position = Point3<i32>;
 pub type Extent = Extent3<i32>;
-pub type CType = Chunk<[i32; 3], voxel::Id, Meta>;
+pub type CType<T> = Chunk<[i32; 3], voxel::Id, Meta<T>>;
 
 impl PositionTrait for Position {
     fn neighbor(&self, dir: util::Direction) -> Self {
@@ -84,15 +88,19 @@ pub trait PositionTrait {
 }
 
 #[derive(Debug, Copy, Clone)]
-pub struct Meta {
+pub struct Meta<T>
+    where T: Copy + Clone 
+{
     //0-5 transparency, 6 visibility
     visibility: BitArray<LocalBits, [u8; 1]>,
     voxel_visibility: BitArray<LocalBits, [u64; VOXELS_IN_CHUNK/64]>,
-    render_offset: Option<crate::render::chunk::BufferOffset>,
+    render_offset: Option<T>,
     pub render_amount: u16,
 }
 
-impl Meta {
+impl<T> Meta<T>
+    where T: Copy + Clone 
+{
     pub fn new() -> Self {
         Self {
             visibility: BitArray::new([0; 1]),
@@ -128,23 +136,23 @@ impl Meta {
         self.render_offset.is_some()
     }
 
-    pub fn set_render_offset(&mut self, value: Option<crate::render::chunk::BufferOffset>) {
+    pub fn set_render_offset(&mut self, value: Option<T>) {
         self.render_offset = value;
     }
 
-    pub fn render_offset(&self) -> Option<crate::render::chunk::BufferOffset> {
+    pub fn render_offset(&self) -> Option<T> {
         self.render_offset
     }
 }
 
 pub fn calc_center_point(pos: Position) -> glm::Vec3 {
-    let offset = crate::consts::CHUNK_SIZE_F32;
+    let offset = CHUNK_SIZE_F32;
     let mut pos_f32 = glm::vec3(pos.x() as f32, pos.y() as f32, pos.z() as f32);
-    pos_f32 *= crate::consts::VOXEL_SIZE;
+    pos_f32 *= voxel::VOXEL_SIZE;
     pos_f32 -= glm::vec3(offset, offset, offset);
     pos_f32 + glm::vec3(offset/2.0, offset/2.0, offset/2.0)
 }
 
 pub fn calc_radius() -> f32 {
-    (crate::consts::CHUNK_SIZE_F32*crate::consts::VOXEL_SIZE)/2.0
+    (CHUNK_SIZE_F32*voxel::VOXEL_SIZE)/2.0
 }

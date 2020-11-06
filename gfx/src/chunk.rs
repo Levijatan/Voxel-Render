@@ -1,7 +1,5 @@
 use super::model;
 use super::texture;
-use crate::consts::CHUNK_SIZE_U32;
-use crate::consts::RENDER_RADIUS;
 use anyhow::{ensure, Result};
 use model::Vertex;
 use std::convert::TryInto;
@@ -9,28 +7,23 @@ use std::ops::Range;
 
 pub type BufferOffset = u32;
 
-#[optick_attr::profile]
-fn render_area_u32() -> u32 {
-    let render_radius: u32 = RENDER_RADIUS.try_into().unwrap();
+fn render_area_u32(render_radius: u32) -> u32 {
     let render_diameter = (render_radius * 2) + 1;
     render_diameter * render_diameter * render_diameter
 }
 
-#[optick_attr::profile]
-fn render_area_u64() -> Result<u64> {
-    let render_area = render_area_u32().try_into()?;
+fn render_area_u64(render_radius: u32) -> Result<u64> {
+    let render_area = render_area_u32(render_radius).try_into()?;
     Ok(render_area)
 }
 
-#[optick_attr::profile]
-fn buffer_offset_u32() -> u32 {
-    let tot_chunk_size = CHUNK_SIZE_U32 * CHUNK_SIZE_U32 * CHUNK_SIZE_U32;
+fn buffer_offset_u32(size: u32) -> u32 {
+    let tot_chunk_size = size * size * size;
     tot_chunk_size * 3
 }
 
-#[optick_attr::profile]
-fn buffer_offset_u64() -> Result<u64> {
-    let offset_u32 = buffer_offset_u32();
+fn buffer_offset_u64(size: u32) -> Result<u64> {
+    let offset_u32 = buffer_offset_u32(size);
     let offset: u64 = offset_u32.try_into()?;
     Ok(offset)
 }
@@ -42,9 +35,9 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub fn new() -> Self {
-        let free_offsets = (0..render_area_u32()).collect();
-        let buffer_offset_multiplier = buffer_offset_u32();
+    pub fn new(size: u32) -> Self {
+        let free_offsets = (0..render_area_u32(size)).collect();
+        let buffer_offset_multiplier = buffer_offset_u32(size);
 
         Self {
             free_offsets,
@@ -52,13 +45,11 @@ impl Renderer {
         }
     }
 
-    #[optick_attr::profile]
     pub fn fetch_offset(&mut self) -> Option<BufferOffset> {
         let offset = self.free_offsets.pop()?;
         Some(offset * self.buffer_offset_multiplier)
     }
 
-    #[optick_attr::profile]
     pub fn return_offset(&mut self, off: BufferOffset) -> Result<()> {
         let offset = off / self.buffer_offset_multiplier;
         ensure!(
@@ -78,16 +69,17 @@ pub struct State {
 }
 
 impl State {
-    #[optick_attr::profile]
     pub fn new(
         device: &wgpu::Device,
         sc_desc: &wgpu::SwapChainDescriptor,
         light_bind_group_layout: &wgpu::BindGroupLayout,
         uniform_bind_group_layout: &wgpu::BindGroupLayout,
         queue: &wgpu::Queue,
+        size: u32,
+        render_radius: u32,
     ) -> Result<Self> {
         let raw_instance_size: u64 = std::mem::size_of::<super::state::InstanceRaw>().try_into()?;
-        let instance_buffer_size = render_area_u64()? * buffer_offset_u64()? * raw_instance_size;
+        let instance_buffer_size = render_area_u64(render_radius)? * buffer_offset_u64(size)? * raw_instance_size;
 
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Instace Buffer"),
@@ -176,8 +168,8 @@ impl State {
             sc_desc.format,
             Some(texture::Texture::DEPTH_FORMAT),
             &[model::MVertex::desc()],
-            wgpu::include_spirv!("../shaders/shader.vert.spv"),
-            wgpu::include_spirv!("../shaders/shader.frag.spv"),
+            wgpu::include_spirv!("./shaders/shader.vert.spv"),
+            wgpu::include_spirv!("./shaders/shader.frag.spv"),
         );
 
         let res_dir = std::path::Path::new(env!("OUT_DIR")).join("res");
@@ -258,7 +250,6 @@ impl<'a, 'b> Draw<'a, 'b> for wgpu::RenderPass<'a>
 where
     'b: 'a,
 {
-    #[optick_attr::profile]
     fn draw_mesh(
         &mut self,
         mesh: &'b model::Mesh,
@@ -270,7 +261,6 @@ where
         self.draw_mesh_instanced(mesh, material, 0..1, chunk, uniforms, light);
     }
 
-    #[optick_attr::profile]
     fn draw_mesh_instanced(
         &mut self,
         mesh: &'b model::Mesh,
@@ -289,7 +279,6 @@ where
         self.draw_indexed(0..mesh.num_elements, 0, instances);
     }
 
-    #[optick_attr::profile]
     fn draw_model(
         &mut self,
         model: &'b model::Model,
@@ -300,7 +289,6 @@ where
         self.draw_model_instanced(model, 0..1, chunk, uniforms, light);
     }
 
-    #[optick_attr::profile]
     fn draw_model_instanced(
         &mut self,
         model: &'b model::Model,
@@ -322,7 +310,6 @@ where
         }
     }
 
-    #[optick_attr::profile]
     fn draw_model_instanced_with_material(
         &mut self,
         model: &'b model::Model,
@@ -344,7 +331,6 @@ where
         }
     }
 
-    #[optick_attr::profile]
     fn draw_chunk(
         &mut self,
         model: &'b model::Model,

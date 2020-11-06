@@ -23,13 +23,12 @@ pub struct State {
 }
 
 impl State {
-    #[optick_attr::profile]
     pub fn new(
         device: &wgpu::Device,
         sc_desc: &wgpu::SwapChainDescriptor,
         uniform_bind_group_layout: &wgpu::BindGroupLayout,
     ) -> (Self, wgpu::BindGroupLayout) {
-        use crate::render::model::Vertex as _;
+        use model::Vertex as _;
         use wgpu::util::DeviceExt as _;
 
         let light = Light {
@@ -79,8 +78,8 @@ impl State {
                 sc_desc.format,
                 Some(texture::Texture::DEPTH_FORMAT),
                 &[model::MVertex::desc()],
-                wgpu::include_spirv!("../shaders/light.vert.spv"),
-                wgpu::include_spirv!("../shaders/light.frag.spv"),
+                wgpu::include_spirv!("./shaders/light.vert.spv"),
+                wgpu::include_spirv!("./shaders/light.frag.spv"),
             )
         };
 
@@ -95,7 +94,6 @@ impl State {
         )
     }
 
-    #[optick_attr::profile]
     pub fn update(&mut self, queue: &mut wgpu::Queue, dt: &std::time::Duration) {
         let old_position = self.light.position;
         self.light.position = glm::quat_rotate_vec3(
@@ -146,7 +144,6 @@ impl<'a, 'b> Draw<'a, 'b> for wgpu::RenderPass<'a>
 where
     'b: 'a,
 {
-    #[optick_attr::profile]
     fn draw_light_mesh(
         &mut self,
         mesh: &'b model::Mesh,
@@ -156,7 +153,6 @@ where
         self.draw_light_mesh_instaced(mesh, 0..1, uniforms, light);
     }
 
-    #[optick_attr::profile]
     fn draw_light_mesh_instaced(
         &mut self,
         mesh: &'b model::Mesh,
@@ -171,7 +167,6 @@ where
         self.draw_indexed(0..mesh.num_elements, 0, instances);
     }
 
-    #[optick_attr::profile]
     fn draw_light_model(
         &mut self,
         model: &'b model::Model,
@@ -181,7 +176,6 @@ where
         self.draw_light_model_instanced(model, 0..1, uniforms, light);
     }
 
-    #[optick_attr::profile]
     fn draw_light_model_instanced(
         &mut self,
         model: &'b model::Model,

@@ -1,8 +1,14 @@
 use std::collections::HashMap;
 use building_blocks::core::Point3;
 
+use super::chunk;
+
 pub type Id = u16;
 pub type Position = Point3<i32>;
+
+pub const OPAQUE_VOXEL: &str = "opaque";
+pub const TRANSPARENT_VOXEL: &str = "transparent";
+pub const VOXEL_SIZE: f32 = 2.0;
 
 #[derive(Debug, Copy, Clone)]
 pub struct Attributes {
@@ -10,8 +16,8 @@ pub struct Attributes {
 }
 
 pub fn calc_pos(pos: Position) -> glm::Vec3 {
-    let offset = crate::consts::CHUNK_SIZE_F32;
-    (glm::vec3(pos.x()  as f32, pos.y() as f32, pos.z() as f32) * crate::consts::VOXEL_SIZE) - glm::vec3(offset, offset, offset)
+    let offset = chunk::CHUNK_SIZE_F32;
+    (glm::vec3(pos.x()  as f32, pos.y() as f32, pos.z() as f32) * VOXEL_SIZE) - glm::vec3(offset, offset, offset)
 }
 
 pub fn rotation() -> glm::Qua<f32> {
