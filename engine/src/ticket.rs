@@ -9,18 +9,19 @@ use building_blocks::prelude::{PointN, ForEachMut};
 use gfx::state::Instance;
 use log::info;
 
-pub type TicketComponents = (world::Id, chunk::Position, Ticket);
+pub type Components = (world::Id, chunk::Position, Ticket);
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Ticket {
     ttl: clock::Tick,
     extent: chunk::Extent,
-    max_radius: u8,
-    cur_radius: u8,
+    max_radius: i32,
+    cur_radius: i32,
 }
 
 impl Ticket {
-    pub fn new(ttl: clock::Tick, max_radius: u8, pos: &chunk::Position) -> Self {
+    #[allow(clippy::must_use_candidate)]
+    pub fn new(ttl: clock::Tick, max_radius: i32, pos: &chunk::Position) -> Self {
         assert!(max_radius % 2 != 0, "max_radius has to be an odd number!!");
         Self{
             ttl,
@@ -33,32 +34,35 @@ impl Ticket {
     pub fn propagate(&mut self, pos: chunk::Position) {
         if self.cur_radius < self.max_radius {
             self.cur_radius += 1;
-            self.extent = chunk::Extent::from_min_and_shape((pos - PointN([(self.cur_radius as i32 - 1); 3])).key(), PointN([chunk::CHUNK_SIZE_I32 * ((self.cur_radius as i32 * 2) - 1); 3]));
+            self.extent = chunk::Extent::from_min_and_shape((pos - PointN([(self.cur_radius - 1); 3])).key(), PointN([chunk::CHUNK_SIZE_I32 * ((self.cur_radius * 2) - 1); 3]));
         }
     }
 
+    #[allow(clippy::must_use_candidate)]
     pub const fn done_propagating(&self) -> bool {
         self.cur_radius == self.max_radius
     }
 
+    #[allow(clippy::must_use_candidate)]
     pub const fn extent(&self) -> chunk::Extent {
         self.extent
     }
 
-    pub fn create(world_id: world::Id, pos: chunk::Position, ttl: clock::Tick, max_radius: u8) -> TicketComponents {
-        (world_id, pos, Ticket::new(ttl, max_radius, &pos))
+    #[allow(clippy::must_use_candidate)]
+    pub fn create(world_id: world::Id, pos: chunk::Position, ttl: clock::Tick, max_radius: i32) -> Components {
+        (world_id, pos, Self::new(ttl, max_radius, &pos))
     }
 
-    
-    pub fn systems(schedule_builder: &mut legion::systems::Builder, render_radius: u8) {
-        Ticket::add_system(schedule_builder, render_radius);
-        Ticket::update_system(schedule_builder);
-        Ticket::render_system(schedule_builder);
+    pub fn systems(schedule_builder: &mut legion::systems::Builder, render_radius: i32) {
+        assert!(render_radius > 0, "render_radius cannot be a number lower that 1");
+        Self::add_system(schedule_builder, render_radius);
+        Self::update_system(schedule_builder);
+        Self::render_system(schedule_builder);
     }
 
-    fn add_system(schedule_builder: &mut legion::systems::Builder, render_radius: u8) {
+    fn add_system(schedule_builder: &mut legion::systems::Builder, render_radius: i32) {
         schedule_builder.add_system(SystemBuilder::new("TicketAddSystem")
-            .with_query(<(Read<world::Id>, Read<chunk::Position>, Read<Ticket>)>::query())
+            .with_query(<(Read<world::Id>, Read<chunk::Position>, Read<Self>)>::query())
             .with_query(<world::Id>::query().filter(component::<world::Active>()))
             .read_resource::<clock::Clock>()
             .build(move |cmd, ecs, clock, (ticket_query, world_query)| {
@@ -73,7 +77,7 @@ impl Ticket {
                             }
                         });
                         if !has_active_ticket {
-                            let ticket = Ticket::create(*world_id, PointN([0; 3]), 40, render_radius);
+                            let ticket = Self::create(*world_id, PointN([0; 3]), 40, render_radius);
                             info!("Adding new ticket {:#?}", ticket);
                             cmd.push(ticket);
                         }
@@ -85,8 +89,8 @@ impl Ticket {
 
     fn update_system(schedule_builder: &mut legion::systems::Builder) {
         schedule_builder.add_system(SystemBuilder::new("TicketUpdateSyste")
-            .with_query(<(Read<world::Id>, Write<chunk::Position>, Write<Ticket>)>::query())
-            .with_query(<(world::Id, Write<world::Map<gfx::chunk::BufferOffset>>)>::query().filter(component::<world::Active>()))
+            .with_query(<(Read<world::Id>, Write<chunk::Position>, Write<Self>)>::query())
+            .with_query(<(world::Id, Read<world::TypeId>, Write<world::Map<geom::chunk::Meta<gfx::chunk::BufferOffset>>>)>::query().filter(component::<world::Active>()))
             .read_resource::<clock::Clock>()
             .read_resource::<world::TypeRegistry<gfx::chunk::BufferOffset>>()
             .read_resource::<voxel::Registry>()
@@ -94,14 +98,14 @@ impl Ticket {
                 if clock.do_tick() {
                     info!("***Update Ticket System***");
                     let (mut world_ecs, mut ticket_ecs) = ecs.split_for_query(world_query);
-                    world_query.for_each_mut(&mut world_ecs, |(world_id, map)| {
-                        let world_type = world_type_reg.world_type(map.type_id()).unwrap();
+                    world_query.for_each_mut(&mut world_ecs, |(world_id, type_id, map)| {
+                        let world_type = world_type_reg.world_type(*type_id).unwrap();
                         ticket_query.for_each_mut(&mut ticket_ecs, |(ticket_world_id, pos, ticket)| {
                             if world_id == ticket_world_id && !ticket.done_propagating() {
                                 ticket.propagate(*pos);
                                 info!("Propagating ticket {:#?}", ticket);
-                                for key in map.chunk_map.key_iter(&ticket.extent()) {
-                                    let _chunk = map.chunk_map.get_mut_chunk_or_insert_with(
+                                for key in map.key_iter(&ticket.extent()) {
+                                    let _chunk = map.get_mut_chunk_or_insert_with(
                                         key,
                                         |point, extent| {
                                             world_type.gen_chunk(point, extent, voxel_reg)
@@ -119,8 +123,8 @@ impl Ticket {
 
     fn render_system(schedule_builder: &mut legion::systems::Builder) {
         schedule_builder.add_system(SystemBuilder::new("RenderTicketSystem")
-            .with_query(<(Read<world::Id>, Read<Ticket>)>::query())
-            .with_query(<(world::Id, Write<world::Map<gfx::chunk::BufferOffset>>)>::query().filter(component::<world::Active>()))
+            .with_query(<(Read<world::Id>, Read<Self>)>::query())
+            .with_query(<(world::Id, Write<world::Map<geom::chunk::Meta<gfx::chunk::BufferOffset>>>)>::query().filter(component::<world::Active>()))
             .read_resource::<clock::Clock>()
             .read_resource::<gfx::chunk::State>()
             .read_resource::<voxel::Registry>()
@@ -134,9 +138,9 @@ impl Ticket {
                         ticket_query.for_each_mut(&mut ticket_ecs, |(ticket_world_id, ticket)| {
                             if world_id == ticket_world_id {
                                 let mut cnt = 0;
-                                for key in map.chunk_map.key_iter(&ticket.extent()) {
-                                    let extent = map.chunk_map.extent_for_chunk_at_key(&key);
-                                    if let Some(chunk) = map.chunk_map.get_mut_chunk(key) {
+                                for key in map.key_iter(&ticket.extent()) {
+                                    let extent = map.extent_for_chunk_at_key(&key);
+                                    if let Some(chunk) = map.get_mut_chunk(key) {
                                         if chunk.metadata.is_visible() && !chunk.metadata.has_render_offset() {
                                             info!("Loading chunk to gpu: {:#?}", chunk.metadata);
                                             if let Some(render_offset) = chunk_renderer.fetch_offset() {
@@ -151,7 +155,7 @@ impl Ticket {
                                                         instances.push(Instance{position, rotation})
                                                     }
                                                 });
-                                                gfx::state::set_instance_buffer(render_queue, chunk_state, &instances, render_offset as u64);
+                                                gfx::state::set_instance_buffer(render_queue, chunk_state, &instances, render_offset.into());
                                                 c_meta.set_render_offset(Some(render_offset));
                                                 c_meta.render_amount = instances.len() as u16;
                                             }

@@ -45,10 +45,9 @@ fn main() -> Result<()> {
     let mut world_type_reg = geom::world::TypeRegistry::<gfx::chunk::BufferOffset>::new();
     let world_type = world_type_reg.register_world_type(Box::new(geom::world::FlatWorldType {}));
 
-    let (active_world,) = geom::world::Map::<gfx::chunk::BufferOffset>::create(world_type);
-    ecs.push((active_world, geom::world::Active {}));
+    ecs.push(geom::world::create_active(world_type, geom::chunk::Meta::<gfx::chunk::BufferOffset>::new()));
 
-    let clock = clock::Clock::new();
+    let clock = clock::Clock::default();
 
     block_on(gfx::state::new(&window, &mut resources, chunk::CHUNK_SIZE_U32, consts::RENDER_RADIUS as u32));
 
@@ -121,7 +120,7 @@ fn update_every_tick_system(schedule_builder: &mut legion::systems::Builder) {
         .write_resource::<clock::Clock>()
         .build(|_, _, clock, _| {
             if clock.cur_tick() > clock.last_tick() {
-                clock.tick_done();
+                let _tick = clock.tick_done();
             }
         }),
     );
@@ -148,7 +147,7 @@ fn update_system(schedule_builder: &mut legion::systems::Builder) {
 fn render_system(schedule_builder: &mut legion::systems::Builder) {
     schedule_builder.add_thread_local(legion::SystemBuilder::new("RenderSystem")
         .with_query(<(Read<geom::world::Id>, Read<ticket::Ticket>)>::query())
-        .with_query(<(geom::world::Id, Write<geom::world::Map<gfx::chunk::BufferOffset>>)>::query().filter(component::<geom::world::Active>()))
+        .with_query(<(geom::world::Id, Write<geom::world::Map<geom::chunk::Meta<gfx::chunk::BufferOffset>>>)>::query().filter(component::<geom::world::Active>()))
         .read_resource::<wgpu::Device>()
         .read_resource::<gfx::chunk::State>()
         .read_resource::<gfx::light::State>()
@@ -202,8 +201,8 @@ fn render_system(schedule_builder: &mut legion::systems::Builder) {
                 world_query.for_each_mut(&mut world_ecs, |(world_id, map)| {
                     ticket_query.for_each(&ticket_ecs, |(ticket_world_id, ticket)| {
                         if world_id == ticket_world_id {
-                            for key in map.chunk_map.key_iter(&ticket.extent()) {
-                                if let Some(chunk) = map.chunk_map.get_mut_chunk(key) {
+                            for key in map.key_iter(&ticket.extent()) {
+                                if let Some(chunk) = map.get_mut_chunk(key) {
                                     if chunk.metadata.is_visible() {
                                         if let Some(offset) = chunk.metadata.render_offset() {
                                             if camera.cube_in_view(&geom::chunk::calc_center_point(key), geom::chunk::calc_radius()) {

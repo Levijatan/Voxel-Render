@@ -1,3 +1,5 @@
+#![warn(clippy::all, clippy::nursery, clippy::pedantic)]
+
 extern crate nalgebra_glm as glm;
 
 pub mod chunk;

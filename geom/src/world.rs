@@ -13,33 +13,22 @@ use building_blocks::{
 
 pub type TypeId = u32;
 pub type Id = legion::Entity;
-
-pub struct Map<T> 
-    where T: Copy + Clone
-{
-    pub chunk_map: ChunkMap3<voxel::Id, chunk::Meta<T>>,
-    type_id: TypeId,
-}
-
-impl<T> Map<T> 
-    where T: Copy + Clone
-{
-    pub fn new(type_id: TypeId) -> Self {
-        let ambient_value = 1;
-        let default_chunk_metadata = chunk::Meta::<T>::new();
-        Self{ type_id, chunk_map: ChunkMap3::new(chunk::CHUNK_SHAPE, ambient_value, default_chunk_metadata, FastLz4 { level: 10 }) }
-    }
-
-    pub fn type_id(&self) -> TypeId {
-        self.type_id
-    }
-
-    pub fn create(world_type: TypeId) -> (Self,) {
-        (Self::new(world_type),)
-    } 
-}
+pub type Map<M> =  ChunkMap3<voxel::Id, M>;
 
 pub struct Active {}
+
+pub fn create<M>(world_type: TypeId, chunk_meta: M) -> (Map<M>, TypeId)
+    where M: Clone + Copy
+{
+    (Map::new(chunk::CHUNK_SHAPE, 1, chunk_meta, FastLz4 { level: 10 }), world_type)
+}
+
+pub fn create_active<M>(world_type: TypeId, chunk_meta: M) -> (Map<M>, TypeId, Active) 
+    where M: Clone + Copy
+{
+    let (map, meta) = create(world_type, chunk_meta);
+    (map, meta, Active{})
+}
 
 pub struct TypeRegistry<T> {
     world_type_reg: HashMap<u32, Box<dyn TypeTrait<T>>>,

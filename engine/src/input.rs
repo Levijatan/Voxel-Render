@@ -7,6 +7,12 @@ pub struct State {
     last_mouse_pos: PhysicalPosition<f64>,
 }
 
+impl Default for State {
+    fn default() -> Self {
+        State::new()
+    }
+}
+
 impl State {
     pub fn new() -> Self {
         Self {
