@@ -18,3 +18,9 @@ pub mod clock;
 /// 
 /// The module for dealing with all input related tasks
 pub mod input;
+
+
+/// # Chunk
+/// 
+///  The module for dealing with engine related chunk data
+pub mod chunk;

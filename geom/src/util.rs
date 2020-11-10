@@ -49,6 +49,7 @@ pub const ALL_DIRECTIONS: [Direction; 6] = [
     Direction::South,
 ];
 
+#[allow(clippy::must_use_candidate)]
 pub fn normals_f32(dir: Direction) -> glm::TVec3<f32> {
     use Direction::{East, West, Up, Down, North, South};
     match dir {
@@ -61,7 +62,8 @@ pub fn normals_f32(dir: Direction) -> glm::TVec3<f32> {
     }
 }
 
-pub fn normals_i32(dir: Direction) -> Point3<i32> {
+#[allow(clippy::must_use_candidate)]
+pub const fn normals_i32(dir: Direction) -> Point3<i32> {
     use Direction::{East, West, Up, Down, North, South};
     match dir {
         East => PointN([1, 0, 0]),
@@ -73,7 +75,8 @@ pub fn normals_i32(dir: Direction) -> Point3<i32> {
     }
 }
 
-pub fn reverse_direction(dir: Direction) -> Direction {
+#[allow(clippy::must_use_candidate)]
+pub const fn reverse_direction(dir: Direction) -> Direction {
     use Direction::{East, West, Up, Down, North, South};
     match dir {
         East => West,
@@ -85,9 +88,10 @@ pub fn reverse_direction(dir: Direction) -> Direction {
     }
 }
 
-pub fn calc_voxel_idx(x: usize, y: usize, z: usize) -> usize {
-    use chunk::CHUNK_SIZE_USIZE;
-    let size = CHUNK_SIZE_USIZE;
+#[allow(clippy::must_use_candidate)]
+pub fn calc_voxel_idx(x: i32, y: i32, z: i32) -> i32 {
+    use chunk::CHUNK_SIZE_I32;
+    let size = CHUNK_SIZE_I32;
     assert!(x < size, "x cannot be larger then {}", size);
     assert!(y < size, "y cannot be larger then {}", size);
     assert!(z < size, "z cannot be larger then {}", size);

@@ -16,6 +16,9 @@ rayon = "1.5.0"
 legion = "0.3.1"
 image = "0.23.11"
 tobj = "2.0.2"
+thiserror = "1.0.22"
+num = "0.3.1"
+dashmap = "3.11.10"
 
 [build-dependencies]
 anyhow = "1.0"

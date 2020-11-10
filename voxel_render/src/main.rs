@@ -1,6 +1,5 @@
-#![warn(clippy::all)]
-
-extern crate nalgebra_glm as glm;
+#![warn(clippy::all, clippy::nursery, clippy::pedantic)]
+#![allow(clippy::single_match)]
 
 use anyhow::Result;
 use futures::executor::block_on;
@@ -9,10 +8,10 @@ use winit::event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEve
 
 use gfx::chunk::Draw as _;
 use gfx::light::Draw as _;
+use geom::chunk::Meta as _;
 
 mod consts;
-use engine::{input, clock, ticket};
-use geom::{voxel, chunk};
+
 
 fn main() -> Result<()> {
     env_logger::init();
@@ -26,7 +25,7 @@ fn main() -> Result<()> {
         })
         .build(&event_loop)?;
 
-    let input = input::State::new();
+    let input = engine::input::State::new();
 
     let mut chunk_group = storage::GroupDef::new();
     chunk_group.add(storage::ComponentTypeId::of::<geom::chunk::Position>());
@@ -39,19 +38,19 @@ fn main() -> Result<()> {
     let mut resources = Resources::default();
 
     let mut voxreg = geom::voxel::Registry::new();
-    voxreg.register_voxel_type(voxel::OPAQUE_VOXEL, false);
-    voxreg.register_voxel_type(voxel::TRANSPARENT_VOXEL, true);
+    voxreg.register_voxel_type(geom::voxel::OPAQUE_VOXEL, false);
+    voxreg.register_voxel_type(geom::voxel::TRANSPARENT_VOXEL, true);
 
-    let mut world_type_reg = geom::world::TypeRegistry::<gfx::chunk::BufferOffset>::new();
+    let mut world_type_reg = geom::world::TypeRegistry::<engine::chunk::MetaU64>::new();
     let world_type = world_type_reg.register_world_type(Box::new(geom::world::FlatWorldType {}));
 
-    ecs.push(geom::world::create_active(world_type, geom::chunk::Meta::<gfx::chunk::BufferOffset>::new()));
+    ecs.push(geom::world::create_active(world_type, engine::chunk::MetaU64::default()));
 
-    let clock = clock::Clock::default();
+    let clock = engine::clock::Clock::default();
 
-    block_on(gfx::state::new(&window, &mut resources, chunk::CHUNK_SIZE_U32, consts::RENDER_RADIUS as u32));
+    block_on(gfx::state::new(&window, &mut resources, geom::chunk::CHUNK_SIZE_U32, consts::RENDER_RADIUS as u32));
 
-    let chunk_renderer = gfx::chunk::Renderer::new(consts::RENDER_RADIUS as u32);
+    let chunk_renderer = gfx::buffer::OffsetControllerU32::new(gfx::chunk::render_area_u32(consts::RENDER_RADIUS as u32), gfx::chunk::buffer_offset_u32(geom::chunk::CHUNK_SIZE_U32));
 
     resources.insert(voxreg);
     resources.insert(world_type_reg);
@@ -60,7 +59,7 @@ fn main() -> Result<()> {
     resources.insert(input);
 
     let mut schedule_builder = Schedule::builder();
-    ticket::Ticket::systems(&mut schedule_builder, consts::RENDER_RADIUS);
+    engine::ticket::Ticket::systems(&mut schedule_builder, consts::RENDER_RADIUS);
     update_every_tick_system(&mut schedule_builder);
     render_system(&mut schedule_builder);
     update_system(&mut schedule_builder);
@@ -77,7 +76,7 @@ fn main() -> Result<()> {
                 ref event,
                 window_id,
             } if window_id == window.id() => {
-                let mut input = resources.get_mut::<input::State>().unwrap();
+                let mut input = resources.get_mut::<engine::input::State>().unwrap();
                 if !input.input(event) {
                     match event {
                         WindowEvent::CloseRequested => {
@@ -117,7 +116,7 @@ fn main() -> Result<()> {
 
 fn update_every_tick_system(schedule_builder: &mut legion::systems::Builder) {
     schedule_builder.add_system(legion::SystemBuilder::new("UpdateEveryTickSystem")
-        .write_resource::<clock::Clock>()
+        .write_resource::<engine::clock::Clock>()
         .build(|_, _, clock, _| {
             if clock.cur_tick() > clock.last_tick() {
                 let _tick = clock.tick_done();
@@ -128,10 +127,10 @@ fn update_every_tick_system(schedule_builder: &mut legion::systems::Builder) {
 
 fn update_system(schedule_builder: &mut legion::systems::Builder) {
     schedule_builder.add_system(legion::SystemBuilder::new("UpdateSystem")
-        .write_resource::<clock::Clock>()
+        .write_resource::<engine::clock::Clock>()
         .write_resource::<gfx::uniforms::State>()
         .write_resource::<gfx::light::State>()
-        .write_resource::<input::State>()
+        .write_resource::<engine::input::State>()
         .write_resource::<wgpu::Queue>()
         .write_resource::<gfx::camera::Camera>()
         .build(|_, _, (clock, uniform, light, input, queue, camera), _| {
@@ -146,8 +145,8 @@ fn update_system(schedule_builder: &mut legion::systems::Builder) {
 
 fn render_system(schedule_builder: &mut legion::systems::Builder) {
     schedule_builder.add_thread_local(legion::SystemBuilder::new("RenderSystem")
-        .with_query(<(Read<geom::world::Id>, Read<ticket::Ticket>)>::query())
-        .with_query(<(geom::world::Id, Write<geom::world::Map<geom::chunk::Meta<gfx::chunk::BufferOffset>>>)>::query().filter(component::<geom::world::Active>()))
+        .with_query(<(Read<geom::world::Id>, Read<engine::ticket::Ticket>)>::query())
+        .with_query(<(geom::world::Id, Write<geom::world::Map<engine::chunk::MetaU64>>)>::query().filter(component::<geom::world::Active>()))
         .read_resource::<wgpu::Device>()
         .read_resource::<gfx::chunk::State>()
         .read_resource::<gfx::light::State>()
@@ -201,14 +200,15 @@ fn render_system(schedule_builder: &mut legion::systems::Builder) {
                 world_query.for_each_mut(&mut world_ecs, |(world_id, map)| {
                     ticket_query.for_each(&ticket_ecs, |(ticket_world_id, ticket)| {
                         if world_id == ticket_world_id {
-                            for key in map.key_iter(&ticket.extent()) {
+                            for key in map.chunk_keys_for_extent(&ticket.extent()) {
                                 if let Some(chunk) = map.get_mut_chunk(key) {
                                     if chunk.metadata.is_visible() {
                                         if let Some(offset) = chunk.metadata.render_offset() {
                                             if camera.cube_in_view(&geom::chunk::calc_center_point(key), geom::chunk::calc_radius()) {
+                                                let amount: u32 = chunk.metadata.render_amount.into();
                                                 render_pass.draw_chunk(
                                                     &chunk_state.voxel_model,
-                                                    offset..(chunk.metadata.render_amount as u32 + offset),
+                                                    offset..(amount + offset),
                                                     &chunk_state.bind_group,
                                                     &uniforms_state.bind_group,
                                                     &light_state.bind_group,

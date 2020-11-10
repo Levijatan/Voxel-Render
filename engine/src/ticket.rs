@@ -1,5 +1,5 @@
-use geom::chunk;
-use geom::chunk::PositionTrait;
+use geom::chunk::PositionTrait as _;
+use geom::chunk::Meta as _;
 use geom::world;
 use geom::voxel;
 use super::clock;
@@ -9,32 +9,51 @@ use building_blocks::prelude::{PointN, ForEachMut};
 use gfx::state::Instance;
 use log::info;
 
-pub type Components = (world::Id, chunk::Position, Ticket);
-
+/// A struct for defining what chunk area that are active.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Ticket {
+    ///How many ticks a Ticket should live
     ttl: clock::Tick,
-    extent: chunk::Extent,
+    ///The area that the ticket holds active
+    extent: geom::chunk::Extent,
+    ///The maximum radius of the area
     max_radius: i32,
+    ///The current radius of the area
     cur_radius: i32,
 }
 
 impl Ticket {
+    ///Returns a Ticket with how many ticks it should exist, its maximum radius and at what posistion in the world the center of the area is.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `ttl` - A amount of `clock::Tick` that the Ticket should exist
+    /// * `max_radius` - The maximum radius of the effected area in i32
+    /// * `pos` - A position in a chunk that is the center of the effected area`
+    /// 
+    /// # Examples
+    /// 
+    /// ```
+    /// use engine::ticket;
+    /// use building_blocks::prelude::PointN;
+    /// let pos: geom::chunk::Position = PointN([0, 0, 0]);
+    /// let ticket = ticket::Ticket::new(40, 5, &pos);
+    /// ```
     #[allow(clippy::must_use_candidate)]
-    pub fn new(ttl: clock::Tick, max_radius: i32, pos: &chunk::Position) -> Self {
+    pub fn new(ttl: clock::Tick, max_radius: i32, pos: &geom::chunk::Position) -> Self {
         assert!(max_radius % 2 != 0, "max_radius has to be an odd number!!");
         Self{
             ttl,
-            extent: chunk::Extent::from_min_and_shape(pos.key(), chunk::CHUNK_SHAPE),
+            extent: geom::chunk::Extent::from_min_and_shape(pos.key(), geom::chunk::CHUNK_SHAPE),
             max_radius,
             cur_radius: 0,
         }
     }
 
-    pub fn propagate(&mut self, pos: chunk::Position) {
+    pub fn propagate(&mut self, pos: geom::chunk::Position) {
         if self.cur_radius < self.max_radius {
             self.cur_radius += 1;
-            self.extent = chunk::Extent::from_min_and_shape((pos - PointN([(self.cur_radius - 1); 3])).key(), PointN([chunk::CHUNK_SIZE_I32 * ((self.cur_radius * 2) - 1); 3]));
+            self.extent = geom::chunk::Extent::from_min_and_shape((pos - PointN([(self.cur_radius - 1); 3])).key(), PointN([geom::chunk::CHUNK_SIZE_I32 * ((self.cur_radius * 2) - 1); 3]));
         }
     }
 
@@ -44,12 +63,12 @@ impl Ticket {
     }
 
     #[allow(clippy::must_use_candidate)]
-    pub const fn extent(&self) -> chunk::Extent {
+    pub const fn extent(&self) -> geom::chunk::Extent {
         self.extent
     }
 
     #[allow(clippy::must_use_candidate)]
-    pub fn create(world_id: world::Id, pos: chunk::Position, ttl: clock::Tick, max_radius: i32) -> Components {
+    pub fn create(world_id: world::Id, pos: geom::chunk::Position, ttl: clock::Tick, max_radius: i32) -> (world::Id, geom::chunk::Position, Ticket) {
         (world_id, pos, Self::new(ttl, max_radius, &pos))
     }
 
@@ -62,7 +81,7 @@ impl Ticket {
 
     fn add_system(schedule_builder: &mut legion::systems::Builder, render_radius: i32) {
         schedule_builder.add_system(SystemBuilder::new("TicketAddSystem")
-            .with_query(<(Read<world::Id>, Read<chunk::Position>, Read<Self>)>::query())
+            .with_query(<(Read<world::Id>, Read<geom::chunk::Position>, Read<Self>)>::query())
             .with_query(<world::Id>::query().filter(component::<world::Active>()))
             .read_resource::<clock::Clock>()
             .build(move |cmd, ecs, clock, (ticket_query, world_query)| {
@@ -87,12 +106,13 @@ impl Ticket {
         );
     }
 
+
     fn update_system(schedule_builder: &mut legion::systems::Builder) {
         schedule_builder.add_system(SystemBuilder::new("TicketUpdateSyste")
-            .with_query(<(Read<world::Id>, Write<chunk::Position>, Write<Self>)>::query())
-            .with_query(<(world::Id, Read<world::TypeId>, Write<world::Map<geom::chunk::Meta<gfx::chunk::BufferOffset>>>)>::query().filter(component::<world::Active>()))
+            .with_query(<(Read<world::Id>, Write<geom::chunk::Position>, Write<Self>)>::query())
+            .with_query(<(world::Id, Read<world::TypeId>, Write<world::Map<super::chunk::MetaU64>>)>::query().filter(component::<world::Active>()))
             .read_resource::<clock::Clock>()
-            .read_resource::<world::TypeRegistry<gfx::chunk::BufferOffset>>()
+            .read_resource::<world::TypeRegistry<super::chunk::MetaU64>>()
             .read_resource::<voxel::Registry>()
             .build(|_, ecs, (clock, world_type_reg, voxel_reg), (ticket_query, world_query)| {
                 if clock.do_tick() {
@@ -104,14 +124,14 @@ impl Ticket {
                             if world_id == ticket_world_id && !ticket.done_propagating() {
                                 ticket.propagate(*pos);
                                 info!("Propagating ticket {:#?}", ticket);
-                                for key in map.key_iter(&ticket.extent()) {
+                                map.chunk_keys_for_extent(&ticket.extent()).for_each(|key|{ 
                                     let _chunk = map.get_mut_chunk_or_insert_with(
                                         key,
                                         |point, extent| {
                                             world_type.gen_chunk(point, extent, voxel_reg)
                                         }
                                     );
-                                }
+                                })
                             }
                         });
                     });
@@ -121,14 +141,15 @@ impl Ticket {
     }
 
 
+    #[allow(clippy::cast_possible_truncation)]
     fn render_system(schedule_builder: &mut legion::systems::Builder) {
         schedule_builder.add_system(SystemBuilder::new("RenderTicketSystem")
             .with_query(<(Read<world::Id>, Read<Self>)>::query())
-            .with_query(<(world::Id, Write<world::Map<geom::chunk::Meta<gfx::chunk::BufferOffset>>>)>::query().filter(component::<world::Active>()))
+            .with_query(<(world::Id, Write<world::Map<super::chunk::MetaU64>>)>::query().filter(component::<world::Active>()))
             .read_resource::<clock::Clock>()
             .read_resource::<gfx::chunk::State>()
             .read_resource::<voxel::Registry>()
-            .write_resource::<gfx::chunk::Renderer>()
+            .write_resource::<gfx::buffer::OffsetControllerU32>()
             .read_resource::<wgpu::Queue>()
             .build(|_, ecs, (clock, chunk_state, vox_reg, chunk_renderer, render_queue), (ticket_query, world_query)| {
                 if clock.do_tick() {
@@ -138,7 +159,7 @@ impl Ticket {
                         ticket_query.for_each_mut(&mut ticket_ecs, |(ticket_world_id, ticket)| {
                             if world_id == ticket_world_id {
                                 let mut cnt = 0;
-                                for key in map.key_iter(&ticket.extent()) {
+                                for key in map.chunk_keys_for_extent(&ticket.extent()) {
                                     let extent = map.extent_for_chunk_at_key(&key);
                                     if let Some(chunk) = map.get_mut_chunk(key) {
                                         if chunk.metadata.is_visible() && !chunk.metadata.has_render_offset() {
@@ -146,9 +167,9 @@ impl Ticket {
                                             if let Some(render_offset) = chunk_renderer.fetch_offset() {
                                                 cnt += 1;
                                                 let mut instances = Vec::new();
-                                                let c_map = &mut chunk.map;
+                                                let c_map = &mut chunk.array;
                                                 let c_meta = &mut chunk.metadata;
-                                                c_map.for_each_mut(&extent, |point: chunk::Position, value| {
+                                                c_map.for_each_mut(&extent, |point: geom::chunk::Position, value| {
                                                     if c_meta.voxel_is_visible(point-key) && !vox_reg.is_transparent(*value).unwrap() {
                                                         let rotation = voxel::rotation();
                                                         let position = voxel::calc_pos(point);
@@ -157,6 +178,7 @@ impl Ticket {
                                                 });
                                                 gfx::state::set_instance_buffer(render_queue, chunk_state, &instances, render_offset.into());
                                                 c_meta.set_render_offset(Some(render_offset));
+                                                assert!(instances.len() <= std::u16::MAX as usize, "instance length can never be larger than {}", std::u16::MAX);
                                                 c_meta.render_amount = instances.len() as u16;
                                             }
                                         }

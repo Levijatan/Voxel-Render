@@ -1,7 +1,6 @@
 use super::chunk;
 use super::voxel;
 
-use anyhow::{anyhow, Result};
 use std::{collections::HashMap, cmp::Ordering};
 use building_blocks::{
     storage::{
@@ -35,7 +34,14 @@ pub struct TypeRegistry<T> {
     next_type_key: u32,
 }
 
+impl<T> Default for TypeRegistry<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T> TypeRegistry<T> {
+    #[allow(clippy::must_use_candidate)]
     pub fn new() -> Self {
         Self {
             world_type_reg: HashMap::new(),
@@ -55,12 +61,10 @@ impl<T> TypeRegistry<T> {
         out
     }
 
-    pub fn world_type(&self, world_id: u32) -> Result<&dyn TypeTrait<T>> {
-        if let Some(world_type) = self.world_type_reg.get(&world_id) {
-            Ok(&**world_type)
-        } else {
-            Err(anyhow!("{:?} is not a valid world type id", world_id))
-        }
+    #[allow(clippy::must_use_candidate)]
+    pub fn world_type(&self, world_id: u32) -> Option<&dyn TypeTrait<T>> {
+        let boxed_world_type = self.world_type_reg.get(&world_id)?;
+        Some(&**boxed_world_type)
     }
 }
 
@@ -79,7 +83,7 @@ pub trait TypeTrait<T>: Send + Sync
 pub struct FlatWorldType {}
 
 impl<T> TypeTrait<T> for FlatWorldType 
-    where T: Copy + Clone
+    where T: Copy + Clone + Default + chunk::Meta
 {
     fn gen_chunk(
         &self,
@@ -89,8 +93,8 @@ impl<T> TypeTrait<T> for FlatWorldType
     ) -> chunk::CType<T> {
         let transparent_voxel = vox_reg.key_from_string_id(voxel::TRANSPARENT_VOXEL).unwrap();
         let opaque_voxel = vox_reg.key_from_string_id(voxel::OPAQUE_VOXEL).unwrap();
-        let mut meta = chunk::Meta::<T>::new();
-        let map = match pos.y().partial_cmp(&0).unwrap() {
+        let mut meta = T::default();
+        let array = match pos.y().partial_cmp(&0).unwrap() {
             Ordering::Greater => {
                 meta.set_visibilty(true);
                 meta.set_transparency(63);
@@ -110,7 +114,7 @@ impl<T> TypeTrait<T> for FlatWorldType
                 })
             },
         };
-        chunk::CType{metadata: meta, map}
+        chunk::CType{metadata: meta, array}
     }
     fn world_type(&self) -> &'static str {
         "FlatWorldType"

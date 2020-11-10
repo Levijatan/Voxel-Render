@@ -9,11 +9,12 @@ pub struct State {
 
 impl Default for State {
     fn default() -> Self {
-        State::new()
+        Self::new()
     }
 }
 
 impl State {
+    #[allow(clippy::must_use_candidate)]
     pub fn new() -> Self {
         Self {
             mouse_pressed: false,
@@ -46,11 +47,11 @@ impl State {
                 true
             }
             WindowEvent::CursorMoved { position, .. } => {
-                let mouse_dx = position.x - self.last_mouse_pos.x;
-                let mouse_dy = position.y - self.last_mouse_pos.y;
+                let mouse_d_x = position.x - self.last_mouse_pos.x;
+                let mouse_d_y = position.y - self.last_mouse_pos.y;
                 self.last_mouse_pos = *position;
                 if self.mouse_pressed {
-                    self.camera_controller.process_mouse(mouse_dx, mouse_dy);
+                    self.camera_controller.process_mouse(mouse_d_x, mouse_d_y);
                 }
                 true
             }

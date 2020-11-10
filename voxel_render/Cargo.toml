@@ -5,25 +5,12 @@ authors = ["Levijatan <aasmunjr@uio.no>"]
 edition = "2018"
 
 [dependencies]
-arrayvec = "0.5.2"
-nalgebra-glm = "0.9.0"
-winit = "0.23.0"
-env_logger = "0.8.1"
-log = "0.4"
-wgpu = "0.6"
-futures = "0.3"
-bytemuck = "1.4"
-anyhow = "1.0"
-thiserror = "1.0.22"
-rayon = "1.5.0"
-legion = "0.3.1"
+wgpu = "^0.6"
+winit = "^0.23"
+anyhow = "^1.0"
+legion = "^0.3"
+futures = "^0.3"
+env_logger = "^0.8"
 geom = { path = "../geom"}
 engine = { path = "../engine"}
 gfx = { path = "../gfx"}
-
-[profile.dev.package.voxel-render]
-opt-level = 0
-
-[profile.dev.package."*"]
-codegen-units = 1
-opt-level = "z"

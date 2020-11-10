@@ -1,9 +1,9 @@
+use std::ops::Range;
 use building_blocks::{
     prelude::{Extent3, Point3, PointN},
     storage::Chunk,
 };
-use bitvec::{array::BitArray, order::LocalBits, field::BitField};
-use std::ops::Range;
+
 
 use super::util;
 use super::voxel;
@@ -18,7 +18,7 @@ pub const VOXELS_IN_CHUNK: usize = CHUNK_SIZE_USIZE * CHUNK_SIZE_USIZE * CHUNK_S
 
 pub type Position = Point3<i32>;
 pub type Extent = Extent3<i32>;
-pub type CType<T> = Chunk<[i32; 3], voxel::Id, Meta<T>>;
+pub type CType<M> = Chunk<[i32; 3], voxel::Id, M>;
 
 impl PositionTrait for Position {
     fn neighbor(&self, dir: util::Direction) -> Self {
@@ -87,64 +87,7 @@ pub trait PositionTrait {
     fn edge_extent(&self, dir: util::Direction) -> Extent;
 }
 
-#[derive(Debug, Copy, Clone)]
-pub struct Meta<T>
-    where T: Copy + Clone 
-{
-    //0-5 transparency, 6 visibility
-    visibility: BitArray<LocalBits, [u8; 1]>,
-    voxel_visibility: BitArray<LocalBits, [u64; VOXELS_IN_CHUNK/64]>,
-    render_offset: Option<T>,
-    pub render_amount: u16,
-}
-
-impl<T> Meta<T>
-    where T: Copy + Clone 
-{
-    pub fn new() -> Self {
-        Self {
-            visibility: BitArray::new([0; 1]),
-            voxel_visibility: BitArray::new([0; VOXELS_IN_CHUNK/64]),
-            render_offset: None,
-            render_amount: 0,
-        }
-    }
-
-    pub fn set_transparency(&mut self, value: u8) {
-        assert!(value < 64, "Max val allowed 63");
-        self.visibility[..6].store(value);
-    }
-
-    pub fn set_visibilty(&mut self, value: bool) {
-        self.visibility.set(6, value)
-    }
-
-    pub fn is_visible(&self) -> bool {
-        *self.visibility.get(6).unwrap()
-    }
-
-    pub fn voxel_set_range(&mut self, range: Range<usize>, value: bool) {
-        self.voxel_visibility[range].set_all(value);
-    }
-
-    pub fn voxel_is_visible(&self, p: voxel::Position) -> bool {
-        let idx = util::calc_voxel_idx(p.x() as usize, p.y() as usize, p.z() as usize);
-        *self.voxel_visibility.get(idx).unwrap()
-    }
-
-    pub fn has_render_offset(&self) -> bool {
-        self.render_offset.is_some()
-    }
-
-    pub fn set_render_offset(&mut self, value: Option<T>) {
-        self.render_offset = value;
-    }
-
-    pub fn render_offset(&self) -> Option<T> {
-        self.render_offset
-    }
-}
-
+#[allow(clippy::must_use_candidate)]
 pub fn calc_center_point(pos: Position) -> glm::Vec3 {
     let offset = CHUNK_SIZE_F32;
     let mut pos_f32 = glm::vec3(pos.x() as f32, pos.y() as f32, pos.z() as f32);
@@ -153,6 +96,16 @@ pub fn calc_center_point(pos: Position) -> glm::Vec3 {
     pos_f32 + glm::vec3(offset/2.0, offset/2.0, offset/2.0)
 }
 
+#[allow(clippy::must_use_candidate, clippy::missing_const_for_fn)]
 pub fn calc_radius() -> f32 {
     (CHUNK_SIZE_F32*voxel::VOXEL_SIZE)/2.0
+}
+
+pub trait Meta
+{
+    fn set_transparency(&mut self, value: u8);
+    fn set_visibilty(&mut self, value: bool);
+    fn is_visible(&self) -> bool;
+    fn voxel_set_range(&mut self, range: Range<usize>, value: bool);
+    fn voxel_is_visible(&self, p: voxel::Position) -> bool;
 }

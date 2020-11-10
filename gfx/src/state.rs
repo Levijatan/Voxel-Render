@@ -5,7 +5,7 @@ use super::texture;
 use super::uniforms;
 use std::convert::TryInto;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Copy)]
 pub struct Instance {
     pub position: glm::Vec3,
     pub rotation: glm::Quat,
